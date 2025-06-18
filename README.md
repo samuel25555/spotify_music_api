@@ -1,1 +1,1 @@
-# -spotify_music_api
+# spotify_music_api
