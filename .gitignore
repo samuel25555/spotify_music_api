@@ -1,0 +1,48 @@
+# 环境配置文件
+.env
+.env.local
+.env.production
+
+# 日志文件
+logs/
+*.log
+
+# 缓存和数据库
+.cache
+*.cache
+.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Python 虚拟环境
+.venv/
+venv/
+env/
+
+# 编辑器临时文件
+*.swp
+*.swo
+*~
+
+# 下载目录
+downloads/*
+# 但保留 downloads 目录结构
+!downloads/.gitkeep
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE 配置
+.vscode/
+.idea/
+
+# 临时文件
+*.tmp
+*.temp
+*.pid
+
+# 备份文件
+*.bak
+*.backup
