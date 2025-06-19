@@ -1,0 +1,3026 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Downloader - 音乐下载器</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <link href="https://unpkg.com/tailwindcss@^2/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        
+        /* 音乐播放器样式 */
+        .player-bar {
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.95);
+        }
+        
+        .progress-bar {
+            appearance: none;
+            width: 100%;
+            height: 4px;
+            background: #e5e7eb;
+            outline: none;
+            cursor: pointer;
+        }
+        
+        .progress-bar::-webkit-slider-thumb {
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #3b82f6;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        
+        /* 搜索结果卡片动画 */
+        .search-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .search-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* 骨架屏动画 */
+        .skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+        }
+        
+        @keyframes loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        
+        /* 歌单卡片动画 */
+        .playlist-card {
+            transition: all 0.3s ease;
+        }
+        
+        .playlist-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* 加载状态动画 */
+        .loading-spinner {
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* 图片加载优化 */
+        .img-loading {
+            background: #f3f4f6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .img-error {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+        
+        /* 懒加载图片样式 */
+        .lazy-img-container {
+            position: relative;
+            overflow: hidden;
+            background: #f3f4f6;
+        }
+        
+        .lazy-img {
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+        
+        .lazy-img.loaded {
+            opacity: 1;
+        }
+        
+        .lazy-img-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+            color: #9ca3af;
+        }
+        
+        .lazy-img-error {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #fee2e2;
+            color: #dc2626;
+            font-size: 0.875rem;
+        }
+        
+        /* 图片加载动画 */
+        @keyframes imageShimmer {
+            0% { background-position: -100% 0; }
+            100% { background-position: 100% 0; }
+        }
+        
+        .img-shimmer {
+            background: linear-gradient(
+                90deg,
+                #f3f4f6 0%,
+                #e5e7eb 20%,
+                #f3f4f6 40%,
+                #f3f4f6 100%
+            );
+            background-size: 200% 100%;
+            animation: imageShimmer 1.5s infinite;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="app">
+        <!-- 顶部导航栏 -->
+        <nav class="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 shadow-lg">
+            <div class="container mx-auto flex justify-between items-center">
+                <h1 class="text-2xl font-bold flex items-center">
+                    <i class="fas fa-music mr-2"></i>
+                    Music Downloader
+                </h1>
+                <div class="space-x-4">
+                    <button @click="activeTab = 'search'" 
+                            :class="activeTab === 'search' ? 'bg-white text-blue-600' : 'bg-blue-500'" 
+                            class="px-4 py-2 rounded-lg transition">
+                        <i class="fas fa-search mr-2"></i>搜索
+                    </button>
+                    <button @click="activeTab = 'downloads'" 
+                            :class="activeTab === 'downloads' ? 'bg-white text-blue-600' : 'bg-blue-500'" 
+                            class="px-4 py-2 rounded-lg transition">
+                        <i class="fas fa-download mr-2"></i>下载
+                    </button>
+                    <button @click="activeTab = 'library'" 
+                            :class="activeTab === 'library' ? 'bg-white text-blue-600' : 'bg-blue-500'" 
+                            class="px-4 py-2 rounded-lg transition">
+                        <i class="fas fa-folder-open mr-2"></i>音乐库
+                    </button>
+                    <button @click="activeTab = 'favorites'" 
+                            :class="activeTab === 'favorites' ? 'bg-white text-blue-600' : 'bg-blue-500'" 
+                            class="px-4 py-2 rounded-lg transition">
+                        <i class="fas fa-list mr-2"></i>歌单
+                    </button>
+                    <button @click="activeTab = 'settings'" 
+                            :class="activeTab === 'settings' ? 'bg-white text-blue-600' : 'bg-blue-500'" 
+                            class="px-4 py-2 rounded-lg transition">
+                        <i class="fas fa-cog mr-2"></i>设置
+                    </button>
+                </div>
+            </div>
+        </nav>
+
+        <div class="container mx-auto p-6 pb-32">
+            <!-- 搜索页面 -->
+            <div v-show="activeTab === 'search'" class="space-y-6">
+                <!-- 搜索框 -->
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-2xl font-bold mb-4">🔍 搜索音乐</h2>
+                    <div class="relative">
+                        <div class="flex space-x-4">
+                            <div class="flex-1 relative">
+                                <input v-model="searchQuery" 
+                                       @keyup.enter="searchMusic"
+                                       @input="onSearchInput"
+                                       @focus="showSearchHistory = true"
+                                       @blur="hideSearchHistoryWithDelay"
+                                       type="text" 
+                                       placeholder="输入歌曲名、艺术家或 Spotify 链接..." 
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                
+                                <!-- 搜索历史下拉 -->
+                                <div v-if="showSearchHistory && searchHistory.length > 0" 
+                                     class="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+                                    <div class="p-2 border-b border-gray-100">
+                                        <div class="flex justify-between items-center">
+                                            <span class="text-sm font-medium text-gray-600">搜索历史</span>
+                                            <button @click="clearSearchHistory" 
+                                                    class="text-xs text-red-600 hover:text-red-800">
+                                                清除历史
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="max-h-48 overflow-y-auto">
+                                        <button v-for="(item, index) in searchHistory.slice(0, 10)" 
+                                                :key="index"
+                                                @click="selectSearchHistory(item)"
+                                                class="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center justify-between">
+                                            <span class="text-sm">{{ item.query }}</span>
+                                            <span class="text-xs text-gray-400">{{ item.count }}次</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        <select v-model="searchLimit" 
+                                class="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="50">50首</option>
+                            <option value="100">100首</option>
+                            <option value="200">200首</option>
+                            <option value="500">500首</option>
+                        </select>
+                        <button @click="searchMusic" 
+                                :disabled="searching"
+                                class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition">
+                            <i :class="searching ? 'fas fa-spinner loading-spinner' : 'fas fa-search'" class="mr-2"></i>
+                            <span v-if="searching">搜索中...</span>
+                            <span v-else>搜索</span>
+                        </button>
+                    </div>
+                    
+                    <!-- 搜索状态指示器 -->
+                    <div v-if="searchCache.size > 0" class="mt-3 text-sm text-gray-600">
+                        <i class="fas fa-history mr-1"></i>
+                        已缓存 {{ searchCache.size }} 个搜索结果
+                    </div>
+                    </div>
+                    
+                    <!-- 高级筛选选项 -->
+                    <div class="mt-4 p-4 bg-gray-50 rounded-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <h3 class="text-sm font-medium text-gray-700">🎯 精准筛选</h3>
+                            <button @click="showAdvancedFilters = !showAdvancedFilters" 
+                                    class="text-sm text-blue-600 hover:text-blue-800">
+                                <span v-if="showAdvancedFilters">收起</span>
+                                <span v-else>展开</span>
+                            </button>
+                        </div>
+                        <div v-if="showAdvancedFilters" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">国家筛选</label>
+                                <select v-model="searchFilters.country" 
+                                        class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg">
+                                    <option value="">所有国家</option>
+                                    <option value="china">中国</option>
+                                    <option value="korea">韩国</option>
+                                    <option value="japan">日本</option>
+                                    <option value="usa">美国</option>
+                                    <option value="uk">英国</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">语言筛选</label>
+                                <select v-model="searchFilters.language" 
+                                        class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg">
+                                    <option value="">所有语言</option>
+                                    <option value="chinese">中文</option>
+                                    <option value="korean">韩语</option>
+                                    <option value="japanese">日语</option>
+                                    <option value="english">英语</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">去重设置</label>
+                                <select v-model="searchFilters.deduplicate" 
+                                        class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg">
+                                    <option :value="true">去除重复</option>
+                                    <option :value="false">保留重复</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">试听筛选</label>
+                                <select v-model="searchFilters.preview_only" 
+                                        class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg">
+                                    <option :value="false">显示全部</option>
+                                    <option :value="true">仅可试听</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">快速搜索</label>
+                                <div class="flex space-x-1">
+                                    <button @click="quickSearch('华语')" 
+                                            class="flex-1 px-2 py-1 text-xs bg-yellow-500 text-white rounded hover:bg-yellow-600">华语</button>
+                                    <button @click="quickSearch('韩语')" 
+                                            class="flex-1 px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600">韩语</button>
+                                    <button @click="quickSearch('日语')" 
+                                            class="flex-1 px-2 py-1 text-xs bg-pink-500 text-white rounded hover:bg-pink-600">日语</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 热门音乐快捷按钮 -->
+                    <div class="mt-4">
+                        <h3 class="text-sm font-medium text-gray-700 mb-2">🌍 热门音乐探索</h3>
+                        <div class="flex flex-wrap gap-2">
+                            <button @click="searchCountryTop('korea')" 
+                                    class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition">
+                                <i class="fas fa-flag mr-1"></i>韩国热门
+                            </button>
+                            <button @click="searchCountryTop('japan')" 
+                                    class="px-4 py-2 bg-pink-500 text-white rounded-lg hover:bg-pink-600 transition">
+                                <i class="fas fa-flag mr-1"></i>日本热门
+                            </button>
+                            <button @click="searchCountryTop('turkey')" 
+                                    class="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition">
+                                <i class="fas fa-flag mr-1"></i>土耳其热门
+                            </button>
+                            <button @click="searchCountryTop('usa')" 
+                                    class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">
+                                <i class="fas fa-flag mr-1"></i>欧美热门
+                            </button>
+                            <button @click="searchCountryTop('uk')" 
+                                    class="px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition">
+                                <i class="fas fa-flag mr-1"></i>英国热门
+                            </button>
+                            <button @click="searchCountryTop('china')" 
+                                    class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition">
+                                <i class="fas fa-flag mr-1"></i>华语热门
+                            </button>
+                            <button @click="searchCountryTop('taiwan')" 
+                                    class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition">
+                                <i class="fas fa-flag mr-1"></i>台湾热门
+                            </button>
+                            <button @click="searchCountryTop('europe')" 
+                                    class="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition">
+                                <i class="fas fa-flag mr-1"></i>欧洲热门
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 搜索结果 -->
+                <div v-if="searchResults.length > 0" class="space-y-4">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h3 class="text-xl font-bold">搜索结果 ({{ searchResults.length }} 首)</h3>
+                            <p class="text-sm text-gray-600">
+                                <i class="fas fa-volume-up text-green-600 mr-1"></i>
+                                {{ searchResults.filter(t => t.preview_url).length }} 首可试听 
+                                <span class="mx-2">|</span>
+                                <i class="fas fa-volume-mute text-gray-400 mr-1"></i>
+                                {{ searchResults.filter(t => !t.preview_url).length }} 首无预览
+                            </p>
+                        </div>
+                        <div class="flex space-x-2">
+                            <!-- 批量选择操作 -->
+                            <div class="flex space-x-2">
+                                <button @click="selectAllTracks" 
+                                        class="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition text-sm">
+                                    <i class="fas fa-check-square mr-1"></i>全选
+                                </button>
+                                <button @click="selectNoneTracks" 
+                                        class="px-3 py-2 bg-gray-400 text-white rounded-lg hover:bg-gray-500 transition text-sm">
+                                    <i class="fas fa-square mr-1"></i>全不选
+                                </button>
+                                <button @click="toggleSelectTracks" 
+                                        class="px-3 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition text-sm">
+                                    <i class="fas fa-exchange-alt mr-1"></i>反选
+                                </button>
+                            </div>
+                            
+                            <!-- 批量操作 -->
+                            <div class="flex space-x-2">
+                                <button @click="downloadSelectedTracks" 
+                                        :disabled="batchDownloading || selectedTracks.length === 0"
+                                        class="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition text-sm">
+                                    <i class="fas fa-download mr-1"></i>
+                                    <span v-if="batchDownloading">下载中...</span>
+                                    <span v-else-if="selectedTracks.length > 0">下载 ({{ selectedTracks.length }})</span>
+                                    <span v-else>下载</span>
+                                </button>
+                                <button @click="openAddToPlaylistModal" 
+                                        :disabled="selectedTracks.length === 0"
+                                        class="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition text-sm">
+                                    <i class="fas fa-plus mr-1"></i>
+                                    <span v-if="selectedTracks.length > 0">加入歌单 ({{ selectedTracks.length }})</span>
+                                    <span v-else>加入歌单</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 批量下载进度 -->
+                    <div v-if="batchDownloadProgress.show" class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-sm font-medium">批量下载进度</span>
+                            <span class="text-sm text-blue-600">{{ batchDownloadProgress.completed }}/{{ batchDownloadProgress.total }}</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                                 :style="{width: (batchDownloadProgress.completed / batchDownloadProgress.total * 100) + '%'}"></div>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-600">
+                            <div v-if="batchDownloadProgress.current">正在下载: {{ batchDownloadProgress.current }}</div>
+                            <div v-if="batchDownloadProgress.failed.length > 0" class="text-red-600">
+                                失败 {{ batchDownloadProgress.failed.length }} 首
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                        <div v-for="track in searchResults" :key="track.id" 
+                             class="bg-white rounded-lg shadow-md p-3 search-card"
+                             :class="{'ring-2 ring-blue-500': selectedTracks.includes(track.id)}">
+                            <!-- 选择框（始终显示） -->
+                            <div class="flex justify-between items-start mb-2">
+                                <input type="checkbox" 
+                                       :value="track.id" 
+                                       v-model="selectedTracks"
+                                       class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500">
+                                <!-- 国家语言标识 -->
+                                <div class="flex space-x-1 text-xs">
+                                    <span v-if="track.country" class="px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
+                                        {{ track.country }}
+                                    </span>
+                                    <span v-if="track.language" class="px-2 py-1 bg-green-100 text-green-800 rounded-full">
+                                        {{ track.language }}
+                                    </span>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-start space-x-2">
+                                <div class="lazy-img-container w-12 h-12 rounded flex-shrink-0">
+                                    <div v-if="!imageStates[track.id]?.loaded && !imageStates[track.id]?.error" 
+                                         class="lazy-img-placeholder img-shimmer">
+                                        <i class="fas fa-music text-gray-400"></i>
+                                    </div>
+                                    <div v-if="imageStates[track.id]?.error" 
+                                         class="lazy-img-error">
+                                        <i class="fas fa-image-slash mb-1"></i>
+                                        <span class="text-xs">加载失败</span>
+                                    </div>
+                                    <img :src="track.album_art || defaultAlbumArt" 
+                                         :alt="track.name + ' Album Art'"
+                                         @load="onImageLoad(track.id)"
+                                         @error="onImageError(track.id, $event)"
+                                         v-show="imageStates[track.id]?.loaded"
+                                         class="lazy-img w-full h-full rounded object-cover"
+                                         :class="{ 'loaded': imageStates[track.id]?.loaded }"
+                                         loading="lazy">
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center space-x-1">
+                                        <h4 class="font-medium text-sm truncate" :title="track.title">{{ track.title }}</h4>
+                                        <i v-if="track.preview_url" 
+                                           class="fas fa-volume-up text-green-600 text-xs" 
+                                           title="可试听"></i>
+                                        <i v-else 
+                                           class="fas fa-volume-mute text-gray-400 text-xs" 
+                                           title="无试听"></i>
+                                    </div>
+                                    <p class="text-gray-600 text-xs truncate" :title="track.artist">{{ track.artist }}</p>
+                                    <p class="text-gray-500 text-xs truncate" :title="track.album">{{ track.album }}</p>
+                                    <p class="text-gray-400 text-xs" v-if="track.duration">
+                                        {{ formatDuration(track.duration) }}
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="mt-2 space-y-1">
+                                <!-- 第一行：试听和流媒体 -->
+                                <div class="flex space-x-1">
+                                    <button v-if="track.preview_url"
+                                            @click="playPreview(track)" 
+                                            class="flex-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition">
+                                        <i class="fas fa-headphones mr-1"></i>试听
+                                    </button>
+                                    <div v-else class="flex-1 px-2 py-1 text-xs bg-gray-300 text-gray-600 rounded text-center">
+                                        <i class="fas fa-headphones-slash mr-1"></i>无预览
+                                    </div>
+                                    <button @click="playDirectStream(track)" 
+                                            :disabled="streamingTracks.includes(track.id)"
+                                            class="flex-1 px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400 transition">
+                                        <i class="fas fa-stream mr-1"></i>
+                                        <span v-if="streamingTracks.includes(track.id)">获取中</span>
+                                        <span v-else>流媒体</span>
+                                    </button>
+                                </div>
+                                <!-- 第二行：下载和收藏 -->
+                                <div class="flex space-x-1">
+                                    <button @click="downloadTrack(track)" 
+                                            :disabled="downloadingTracks.includes(track.id)"
+                                            class="flex-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 transition">
+                                        <i class="fas fa-download mr-1"></i>
+                                        <span v-if="downloadingTracks.includes(track.id)">下载中</span>
+                                        <span v-else>下载</span>
+                                    </button>
+                                    <button @click="addToFavorites(track)" 
+                                            class="flex-1 px-2 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 transition">
+                                        <i class="fas fa-heart mr-1"></i>收藏
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 下载页面 -->
+            <div v-show="activeTab === 'downloads'" class="space-y-6">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-bold">📥 下载任务</h2>
+                        <div class="flex space-x-2">
+                            <button @click="clearDownloadTasks('failed')" 
+                                    class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition">
+                                <i class="fas fa-trash-alt mr-2"></i>清除失败记录
+                            </button>
+                            <button @click="clearDownloadTasks('completed')" 
+                                    class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+                                <i class="fas fa-check-circle mr-2"></i>清除成功记录
+                            </button>
+                            <button @click="clearDownloadTasks()" 
+                                    class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+                                <i class="fas fa-trash mr-2"></i>清除所有记录
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 系统状态 -->
+                    <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center">
+                                <i class="fas fa-info-circle text-blue-600 mr-2"></i>
+                                <span class="text-sm">
+                                    <span v-if="systemInfo.has_ffmpeg" class="text-green-600">
+                                        ✅ {{ systemInfo.format_note }}
+                                    </span>
+                                    <span v-else class="text-orange-600">
+                                        ⚠️ {{ systemInfo.format_note }}
+                                    </span>
+                                </span>
+                            </div>
+                            <div class="flex space-x-1">
+                                <span v-for="format in systemInfo.supported_formats" :key="format"
+                                      :class="format === systemInfo.preferred_format ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'"
+                                      class="px-2 py-1 rounded text-xs">
+                                    {{ format.toUpperCase() }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 下载表单 -->
+                    <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+                        <h3 class="font-bold mb-3">快速下载</h3>
+                        <div class="space-y-4">
+                            <input v-model="downloadForm.url" 
+                                   type="text" 
+                                   placeholder="粘贴 Spotify 链接..." 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+                            <div class="grid grid-cols-2 gap-4">
+                                <select v-model="downloadForm.format" 
+                                        class="px-4 py-2 border border-gray-300 rounded-lg">
+                                    <option value="mp3">MP3</option>
+                                    <option value="flac">FLAC</option>
+                                    <option value="m4a">M4A</option>
+                                </select>
+                                <select v-model="downloadForm.quality" 
+                                        class="px-4 py-2 border border-gray-300 rounded-lg">
+                                    <option value="128k">128k</option>
+                                    <option value="320k">320k</option>
+                                    <option value="best">最佳音质</option>
+                                </select>
+                            </div>
+                            <button @click="startDownload" 
+                                    :disabled="downloading"
+                                    class="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition">
+                                <i class="fas fa-download mr-2"></i>
+                                <span v-if="downloading">下载中...</span>
+                                <span v-else>开始下载</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 下载列表 -->
+                    <div class="space-y-3">
+                        <div v-for="task in downloadTasks" :key="task.id" 
+                             class="border rounded-lg p-4 hover:bg-gray-50">
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center space-x-3 flex-1">
+                                    <!-- 专辑封面 -->
+                                    <div class="lazy-img-container w-12 h-12 rounded-lg">
+                                        <div v-if="!imageStates['task_' + task.id]?.loaded && !imageStates['task_' + task.id]?.error" 
+                                             class="lazy-img-placeholder img-shimmer">
+                                            <i class="fas fa-music text-gray-400"></i>
+                                        </div>
+                                        <div v-if="imageStates['task_' + task.id]?.error" 
+                                             class="lazy-img-error">
+                                            <i class="fas fa-image-slash mb-1"></i>
+                                            <span class="text-xs">加载失败</span>
+                                        </div>
+                                        <img v-if="task.metadata && task.metadata.album_art"
+                                             :src="task.metadata.album_art" 
+                                             :alt="(task.metadata.title || 'Unknown') + ' Album Art'"
+                                             @load="onImageLoad('task_' + task.id)"
+                                             @error="onImageError('task_' + task.id, $event)"
+                                             v-show="imageStates['task_' + task.id]?.loaded"
+                                             class="lazy-img w-full h-full rounded-lg object-cover"
+                                             :class="{ 'loaded': imageStates['task_' + task.id]?.loaded }"
+                                             loading="lazy">
+                                        <img v-else
+                                             :src="defaultAlbumArt" 
+                                             alt="Default Album Art"
+                                             class="w-full h-full rounded-lg object-cover">
+                                    </div>
+                                    
+                                    <div class="flex-1">
+                                        <p class="font-medium">{{ getTaskTitle(task) }}</p>
+                                        <p class="text-sm text-gray-600">{{ getTaskArtist(task) }}</p>
+                                        <p class="text-xs text-gray-500">{{ getTaskAlbum(task) }}</p>
+                                        <p class="text-xs text-gray-400 mt-1">{{ formatDate(task.created_at) }}</p>
+                                        
+                                        <!-- 批量下载进度信息 -->
+                                        <div v-if="task.total_songs > 1" class="text-xs text-blue-600 mt-1">
+                                            {{ task.completed_songs || 0 }}/{{ task.total_songs }} 首
+                                            <span v-if="task.failed_songs > 0" class="text-red-600">
+                                                ({{ task.failed_songs }} 首失败)
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="text-right">
+                                    <span :class="getStatusColor(task.status)" 
+                                          class="px-3 py-1 rounded-full text-sm">
+                                        {{ getStatusText(task.status) }}
+                                    </span>
+                                    <div v-if="task.status === 'processing'" class="mt-2">
+                                        <div class="w-32 bg-gray-200 rounded-full h-2">
+                                            <div class="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                                                 :style="{width: task.progress + '%'}"></div>
+                                        </div>
+                                        <p class="text-xs text-gray-600 mt-1">{{ task.progress }}%</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 音乐库页面 -->
+            <div v-show="activeTab === 'library'" class="space-y-6">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-bold">🎵 我的音乐库</h2>
+                        <div class="flex space-x-2">
+                            <button @click="activeTab = 'favorites'" 
+                                    class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition">
+                                <i class="fas fa-list mr-2"></i>管理歌单
+                            </button>
+                            <button @click="loadLibrary" 
+                                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                                <i class="fas fa-sync mr-2"></i>刷新
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 分类过滤 -->
+                    <div class="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">流派</label>
+                            <select v-model="libraryFilters.genre" @change="filterLibrary" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                <option value="">所有流派</option>
+                                <option v-for="genre in availableGenres" :key="genre" :value="genre">
+                                    {{ genre }}
+                                </option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">国家/地区</label>
+                            <select v-model="libraryFilters.country" @change="filterLibrary" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                <option value="">所有国家</option>
+                                <option v-for="country in availableCountries" :key="country" :value="country">
+                                    {{ country }}
+                                </option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">语言</label>
+                            <select v-model="libraryFilters.language" @change="filterLibrary" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                <option value="">所有语言</option>
+                                <option v-for="language in availableLanguages" :key="language" :value="language">
+                                    {{ language }}
+                                </option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">情绪</label>
+                            <select v-model="libraryFilters.mood" @change="filterLibrary" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                <option value="">所有情绪</option>
+                                <option v-for="mood in availableMoods" :key="mood" :value="mood">
+                                    {{ mood }}
+                                </option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- 搜索框 -->
+                    <div class="mb-4">
+                        <input v-model="librarySearch" @input="filterLibrary" 
+                               type="text" 
+                               placeholder="搜索歌曲、艺术家或专辑..." 
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+                    </div>
+                    
+                    <!-- 音乐库列表（详细视图） -->
+                    <div class="space-y-3">
+                        <div v-for="song in library" :key="song.id" 
+                             class="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+                            <div class="flex items-center space-x-4 flex-1">
+                                <div class="lazy-img-container w-20 h-20 rounded-lg">
+                                    <div v-if="!imageStates['lib_' + song.id]?.loaded && !imageStates['lib_' + song.id]?.error" 
+                                         class="lazy-img-placeholder img-shimmer">
+                                        <i class="fas fa-music text-gray-400 text-xl"></i>
+                                    </div>
+                                    <div v-if="imageStates['lib_' + song.id]?.error" 
+                                         class="lazy-img-error">
+                                        <i class="fas fa-image-slash mb-1"></i>
+                                        <span class="text-xs">加载失败</span>
+                                    </div>
+                                    <img :src="song.album_art_url || defaultAlbumArt" 
+                                         :alt="song.title + ' Album Art'"
+                                         @load="onImageLoad('lib_' + song.id)"
+                                         @error="onImageError('lib_' + song.id, $event)"
+                                         v-show="imageStates['lib_' + song.id]?.loaded"
+                                         class="lazy-img w-full h-full rounded-lg object-cover"
+                                         :class="{ 'loaded': imageStates['lib_' + song.id]?.loaded }"
+                                         loading="lazy">
+                                </div>
+                                <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
+                                    <!-- 基本信息 -->
+                                    <div>
+                                        <p class="font-medium text-lg">{{ song.title }}</p>
+                                        <p class="text-sm text-gray-600">🎤 {{ song.artist }}</p>
+                                        <p class="text-xs text-gray-500">💿 {{ song.album || '未知专辑' }}</p>
+                                        <p class="text-xs text-gray-400" v-if="song.year">📅 {{ song.year }}年</p>
+                                    </div>
+                                    
+                                    <!-- 时长和格式信息 -->
+                                    <div class="text-sm">
+                                        <p class="text-gray-700">
+                                            <i class="fas fa-clock mr-1"></i>
+                                            <span v-if="song.duration">时长: {{ formatDuration(song.duration) }}</span>
+                                            <span v-else>时长: 未知</span>
+                                        </p>
+                                        <p class="text-gray-600" v-if="song.preview_url">
+                                            <i class="fas fa-headphones mr-1"></i>
+                                            试听: 30秒
+                                        </p>
+                                        <p class="text-gray-600" v-if="song.file_path">
+                                            <i class="fas fa-file-audio mr-1"></i>
+                                            文件: {{ getShortFilename(song.file_path) }}
+                                            <span v-if="getFileFormat(song.file_path)" 
+                                                  :class="getFormatColor(getFileFormat(song.file_path))"
+                                                  class="ml-1 px-2 py-0.5 rounded text-xs">
+                                                {{ getFileFormat(song.file_path).toUpperCase() }}
+                                            </span>
+                                        </p>
+                                        <p class="text-gray-500 text-xs" v-if="song.file_size">
+                                            <i class="fas fa-hdd mr-1"></i>
+                                            大小: {{ formatFileSize(song.file_size) }}
+                                        </p>
+                                    </div>
+                                    
+                                    <!-- 分类信息 -->
+                                    <div class="text-sm">
+                                        <div class="flex flex-wrap gap-1">
+                                            <span v-if="song.genre" class="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs">
+                                                {{ song.genre }}
+                                            </span>
+                                            <span v-if="song.country" class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">
+                                                {{ song.country }}
+                                            </span>
+                                            <span v-if="song.language" class="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">
+                                                {{ song.language }}
+                                            </span>
+                                            <span v-if="song.mood" class="px-2 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs">
+                                                {{ song.mood }}
+                                            </span>
+                                        </div>
+                                        <p class="text-xs text-gray-400 mt-1">
+                                            <i class="fas fa-calendar-plus mr-1"></i>
+                                            添加于: {{ formatDate(song.created_at) }}
+                                        </p>
+                                        <p class="text-xs text-gray-400" v-if="song.downloaded_at">
+                                            <i class="fas fa-download mr-1"></i>
+                                            下载于: {{ formatDate(song.downloaded_at) }}
+                                        </p>
+                                        <!-- 所属歌单 -->
+                                        <div v-if="getSongPlaylists(song.id).length > 0" class="mt-2">
+                                            <p class="text-xs text-gray-500 mb-1">
+                                                <i class="fas fa-list mr-1"></i>所属歌单:
+                                            </p>
+                                            <div class="flex flex-wrap gap-1">
+                                                <span v-for="playlist in getSongPlaylists(song.id)" :key="playlist.id"
+                                                      class="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs cursor-pointer hover:bg-indigo-200"
+                                                      @click="showPlaylistDetail(playlist.id)">
+                                                    {{ playlist.name }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <!-- 试听按钮 -->
+                                <button @click="playPreview(song)" 
+                                        v-if="song.preview_url"
+                                        class="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+                                    <i class="fas fa-headphones"></i> 试听
+                                </button>
+                                <!-- 本地播放按钮 -->
+                                <button @click="playSong(song)" 
+                                        v-if="song.file_path"
+                                        class="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                                    <i class="fas fa-play"></i> 播放
+                                </button>
+                                <!-- 重新下载按钮 -->
+                                <button @click="downloadSong(song)" 
+                                        v-if="!song.file_path"
+                                        class="px-3 py-1 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition">
+                                    <i class="fas fa-download"></i> 下载
+                                </button>
+                                <!-- 添加到收藏按钮 -->
+                                <button @click="addSongToFavorites(song)" 
+                                        class="px-3 py-1 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition">
+                                    <i class="fas fa-heart"></i> 收藏
+                                </button>
+                                <!-- 删除按钮 -->
+                                <button @click="deleteSong(song)" 
+                                        class="px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 收藏页面 -->
+        <div v-show="activeTab === 'favorites'" class="space-y-6">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">🎵 我的歌单</h2>
+                    <div class="flex space-x-2">
+                        <button @click="cleanupEmptyPlaylists" 
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+                            <i class="fas fa-trash mr-2"></i>清理空歌单
+                        </button>
+                        <button @click="showCreatePlaylistModal = true" 
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                            <i class="fas fa-plus mr-2"></i>新建歌单
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 歌单加载状态 -->
+                <div v-if="playlistsLoading" class="space-y-4">
+                    <div v-for="i in 3" :key="i" class="border rounded-lg p-4">
+                        <div class="animate-pulse">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-6 h-6 bg-gray-300 rounded skeleton"></div>
+                                <div class="flex-1">
+                                    <div class="h-5 bg-gray-300 rounded skeleton mb-2" style="width: 60%"></div>
+                                    <div class="h-4 bg-gray-300 rounded skeleton mb-2" style="width: 40%"></div>
+                                    <div class="flex space-x-2">
+                                        <div class="h-5 w-12 bg-gray-300 rounded-full skeleton"></div>
+                                        <div class="h-5 w-16 bg-gray-300 rounded-full skeleton"></div>
+                                    </div>
+                                </div>
+                                <div class="w-6 h-6 bg-gray-300 rounded skeleton"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 空状态 -->
+                <div v-else-if="!playlistsLoading && userPlaylists.length === 0" class="text-center py-12">
+                    <i class="fas fa-music text-gray-300 text-6xl mb-4"></i>
+                    <p class="text-gray-500 mb-4">还没有歌单</p>
+                    <button @click="showCreatePlaylistModal = true" 
+                            class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                        创建第一个歌单
+                    </button>
+                </div>
+                
+                <!-- 歌单列表 -->
+                <div v-else class="space-y-4">
+                    <div v-for="playlist in userPlaylists" :key="playlist.id" 
+                         class="border rounded-lg p-4 cursor-pointer playlist-card"
+                         @click="togglePlaylistExpansion(playlist)">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center space-x-3">
+                                <i class="fas fa-list text-blue-600"></i>
+                                <div>
+                                    <h3 class="font-medium text-lg">{{ playlist.name }}</h3>
+                                    <p class="text-sm text-gray-600">{{ playlist.total_tracks }} 首歌曲</p>
+                                    <div class="flex space-x-2 mt-1">
+                                        <span v-if="playlist.country" class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
+                                            {{ playlist.country }}
+                                        </span>
+                                        <span v-if="playlist.category" class="text-xs px-2 py-1 bg-purple-100 text-purple-800 rounded-full">
+                                            {{ playlist.category }}
+                                        </span>
+                                        <span v-if="playlist.language" class="text-xs px-2 py-1 bg-green-100 text-green-800 rounded-full">
+                                            {{ playlist.language }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <button @click.stop="deletePlaylist(playlist.id)" 
+                                        v-if="playlist.id"
+                                        class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                                <i :class="currentFavoriteList?.id === playlist.id ? 'fas fa-chevron-up' : 'fas fa-chevron-down'" 
+                                   class="text-gray-400"></i>
+                            </div>
+                        </div>
+                        
+                        <!-- 歌单内容 -->
+                        <div v-if="currentFavoriteList?.id === playlist.id" class="mt-4 border-t pt-4">
+                            <!-- 歌曲加载状态 -->
+                            <div v-if="playlistSongsLoading[playlist.id]" class="space-y-3">
+                                <div class="flex justify-between items-center mb-4">
+                                    <div class="h-8 bg-gray-300 rounded skeleton" style="width: 200px"></div>
+                                    <div class="h-6 bg-gray-300 rounded skeleton" style="width: 100px"></div>
+                                </div>
+                                <div v-for="i in 3" :key="i" class="bg-gray-50 rounded-lg p-3 border">
+                                    <div class="flex items-start space-x-2">
+                                        <div class="w-12 h-12 bg-gray-300 rounded skeleton"></div>
+                                        <div class="flex-1">
+                                            <div class="h-4 bg-gray-300 rounded skeleton mb-1" style="width: 70%"></div>
+                                            <div class="h-3 bg-gray-300 rounded skeleton mb-1" style="width: 50%"></div>
+                                            <div class="h-3 bg-gray-300 rounded skeleton" style="width: 60%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 空状态 -->
+                            <div v-else-if="!playlist.songs || playlist.songs.length === 0" class="text-center py-8 text-gray-500">
+                                <i class="fas fa-music-slash text-gray-300 text-3xl mb-2"></i>
+                                <p>这个歌单还没有歌曲</p>
+                            </div>
+                            
+                            <!-- 歌曲列表 -->
+                            <div v-else>
+                                <!-- 批量操作按钮 -->
+                                <div class="mb-4 flex justify-between items-center">
+                                    <div class="flex space-x-2">
+                                        <button @click="playAllInPlaylist(playlist)" 
+                                                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+                                            <i class="fas fa-play-circle mr-2"></i>播放全部
+                                        </button>
+                                        <button @click="shufflePlayPlaylist(playlist)" 
+                                                class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition">
+                                            <i class="fas fa-random mr-2"></i>随机播放
+                                        </button>
+                                        <button @click="downloadAllInPlaylist(playlist)" 
+                                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                                            <i class="fas fa-download mr-2"></i>下载全部
+                                        </button>
+                                    </div>
+                                    <div class="text-sm text-gray-600">
+                                        共 {{ playlist.songs ? playlist.songs.length : 0 }} 首歌曲
+                                    </div>
+                                </div>
+                                
+                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                <div v-for="track in playlist.songs" :key="track.id" 
+                                     class="bg-gray-50 rounded-lg p-3 border">
+                                    <div class="flex items-start space-x-2">
+                                        <div class="lazy-img-container w-12 h-12 rounded flex-shrink-0">
+                                            <div v-if="!imageStates['pl_' + track.id]?.loaded && !imageStates['pl_' + track.id]?.error" 
+                                                 class="lazy-img-placeholder img-shimmer">
+                                                <i class="fas fa-music text-gray-400"></i>
+                                            </div>
+                                            <div v-if="imageStates['pl_' + track.id]?.error" 
+                                                 class="lazy-img-error">
+                                                <i class="fas fa-image-slash mb-1"></i>
+                                                <span class="text-xs">加载失败</span>
+                                            </div>
+                                            <img :src="track.album_art || defaultAlbumArt" 
+                                                 :alt="track.name + ' Album Art'"
+                                                 @load="onImageLoad('pl_' + track.id)"
+                                                 @error="onImageError('pl_' + track.id, $event)"
+                                                 v-show="imageStates['pl_' + track.id]?.loaded"
+                                                 class="lazy-img w-full h-full rounded object-cover"
+                                                 :class="{ 'loaded': imageStates['pl_' + track.id]?.loaded }"
+                                                 loading="lazy">
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <h4 class="font-medium text-sm truncate" :title="track.title">{{ track.title }}</h4>
+                                            <p class="text-gray-600 text-xs truncate" :title="track.artist">{{ track.artist }}</p>
+                                            <p class="text-gray-500 text-xs truncate" :title="track.album">{{ track.album }}</p>
+                                        </div>
+                                    </div>
+                                    <div class="mt-2 flex space-x-1">
+                                        <button @click="playPreview(track)" 
+                                                v-if="track.preview_url"
+                                                class="flex-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition">
+                                            <i class="fas fa-headphones mr-1"></i>试听
+                                        </button>
+                                        <button @click="downloadTrack(track)" 
+                                                class="flex-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition">
+                                            <i class="fas fa-download mr-1"></i>下载
+                                        </button>
+                                        <button @click="removeTrackFromList(track, list)" 
+                                                class="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 创建收藏列表模态框 -->
+        <div v-if="showCreateListModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" @click="showCreateListModal = false">
+            <div class="bg-white rounded-lg p-6 w-96" @click.stop>
+                <h3 class="text-lg font-bold mb-4">创建新的收藏列表</h3>
+                <input v-model="newListName" 
+                       @keyup.enter="createNewFavoriteList"
+                       type="text" 
+                       placeholder="输入列表名称..." 
+                       class="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4">
+                <div class="flex justify-end space-x-2">
+                    <button @click="showCreateListModal = false" 
+                            class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition">
+                        取消
+                    </button>
+                    <button @click="createNewFavoriteList" 
+                            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                        创建
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置页面 -->
+        <div v-show="activeTab === 'settings'" class="space-y-6">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-2xl font-bold mb-6">⚙️ 播放设置</h2>
+                
+                <!-- 试听设置 -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold mb-4 text-gray-800">试听设置</h3>
+                    <div class="bg-gray-50 rounded-lg p-4 space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Spotify 试听时长</label>
+                                <p class="text-xs text-gray-500">Spotify 官方提供的试听片段固定为 30 秒</p>
+                            </div>
+                            <div class="text-right">
+                                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800">
+                                    <i class="fas fa-info-circle mr-1"></i>
+                                    30 秒 (固定)
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 流媒体播放设置 -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold mb-4 text-gray-800">流媒体播放设置</h3>
+                    <div class="bg-gray-50 rounded-lg p-4 space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">启用试听模式</label>
+                                <p class="text-xs text-gray-500">在流媒体播放中启用定时停止功能</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="playSettings.streamPreviewMode" class="sr-only peer">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
+                        
+                        <div v-if="playSettings.streamPreviewMode">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">流媒体试听时长 (秒)</label>
+                            <div class="flex items-center space-x-4">
+                                <input type="range" 
+                                       v-model="playSettings.previewDuration" 
+                                       min="15" 
+                                       max="120" 
+                                       step="5"
+                                       class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                                <span class="min-w-[60px] text-sm font-medium text-gray-900">{{ playSettings.previewDuration }} 秒</span>
+                            </div>
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>15s</span>
+                                <span>120s</span>
+                            </div>
+                        </div>
+                        
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">自动停止试听</label>
+                                <p class="text-xs text-gray-500">试听时间到达后自动停止播放</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="playSettings.autoStop" class="sr-only peer">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 播放模式说明 -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold mb-4 text-gray-800">播放模式说明</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div class="flex items-center mb-2">
+                                <i class="fas fa-play text-green-600 mr-2"></i>
+                                <h4 class="font-medium text-green-800">试听模式</h4>
+                            </div>
+                            <p class="text-sm text-green-700">使用 Spotify 官方 30 秒试听片段，响应最快</p>
+                        </div>
+                        <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                            <div class="flex items-center mb-2">
+                                <i class="fas fa-stream text-purple-600 mr-2"></i>
+                                <h4 class="font-medium text-purple-800">流媒体播放</h4>
+                            </div>
+                            <p class="text-sm text-purple-700">在线播放完整歌曲，无需下载到本地</p>
+                        </div>
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div class="flex items-center mb-2">
+                                <i class="fas fa-file-audio text-blue-600 mr-2"></i>
+                                <h4 class="font-medium text-blue-800">本地播放</h4>
+                            </div>
+                            <p class="text-sm text-blue-700">播放已下载的本地文件，音质最佳</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 保存设置 -->
+                <div class="flex justify-end">
+                    <button @click="saveSettings" 
+                            class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                        <i class="fas fa-save mr-2"></i>保存设置
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 音乐播放器（固定在底部） -->
+        <div v-if="currentTrack" class="fixed bottom-0 left-0 right-0 player-bar shadow-lg">
+            <div class="container mx-auto p-4">
+                <div class="flex items-center space-x-4">
+                    <!-- 歌曲信息 -->
+                    <div class="flex items-center space-x-3 w-64">
+                        <div class="lazy-img-container w-12 h-12 rounded-lg">
+                            <div v-if="!imageStates['player_' + currentTrack.id]?.loaded && !imageStates['player_' + currentTrack.id]?.error" 
+                                 class="lazy-img-placeholder img-shimmer">
+                                <i class="fas fa-music text-gray-400"></i>
+                            </div>
+                            <div v-if="imageStates['player_' + currentTrack.id]?.error" 
+                                 class="lazy-img-error">
+                                <i class="fas fa-image-slash mb-1"></i>
+                            </div>
+                            <img :src="currentTrack.album_art || defaultAlbumArt" 
+                                 :alt="currentTrack.name + ' Album Art'"
+                                 @load="onImageLoad('player_' + currentTrack.id)"
+                                 @error="onImageError('player_' + currentTrack.id, $event)"
+                                 v-show="imageStates['player_' + currentTrack.id]?.loaded"
+                                 class="lazy-img w-full h-full rounded-lg object-cover"
+                                 :class="{ 'loaded': imageStates['player_' + currentTrack.id]?.loaded }"
+                                 loading="lazy">
+                        </div>
+                        <div>
+                            <p class="font-medium text-sm">{{ currentTrack.title }}</p>
+                            <p class="text-xs text-gray-600">{{ currentTrack.artist }}</p>
+                            <p class="text-xs" :class="getPlayModeColor()">
+                                <i :class="getPlayModeIcon()" class="mr-1"></i>
+                                {{ getPlayModeText() }}
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <!-- 播放控制 -->
+                    <div class="flex-1 flex flex-col items-center">
+                        <div class="flex items-center space-x-4 mb-2">
+                            <button @click="previousTrack" class="text-gray-600 hover:text-gray-800">
+                                <i class="fas fa-step-backward"></i>
+                            </button>
+                            <button @click="togglePlay" 
+                                    class="w-10 h-10 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition">
+                                <i :class="playing ? 'fas fa-pause' : 'fas fa-play'"></i>
+                            </button>
+                            <button @click="nextTrack" class="text-gray-600 hover:text-gray-800">
+                                <i class="fas fa-step-forward"></i>
+                            </button>
+                            <!-- 重复模式按钮 -->
+                            <button @click="toggleRepeatMode" class="text-gray-600 hover:text-gray-800">
+                                <i :class="getRepeatIcon()" :title="getRepeatTitle()"></i>
+                            </button>
+                            <!-- 随机模式按钮 -->
+                            <button @click="toggleShuffleMode" 
+                                    :class="shuffleMode ? 'text-blue-600' : 'text-gray-600'"
+                                    class="hover:text-gray-800">
+                                <i class="fas fa-random" title="随机播放"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- 进度条 -->
+                        <div class="w-full flex items-center space-x-2">
+                            <span class="text-xs text-gray-600">{{ formatTime(currentTime) }}</span>
+                            <input type="range" 
+                                   v-model="currentTime" 
+                                   :max="duration"
+                                   @input="seekTo"
+                                   class="progress-bar flex-1">
+                            <span class="text-xs text-gray-600">{{ formatTime(duration) }}</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 音量控制 -->
+                    <div class="flex items-center space-x-2 w-32">
+                        <i class="fas fa-volume-up text-gray-600"></i>
+                        <input type="range" 
+                               v-model="volume" 
+                               max="100"
+                               @input="changeVolume"
+                               class="progress-bar flex-1">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 音频元素 -->
+        <audio ref="audioPlayer" 
+               @timeupdate="updateTime" 
+               @loadedmetadata="onLoadedMetadata"
+               @ended="onEnded"></audio>
+        
+        <!-- 添加到歌单模态框 -->
+        <div v-if="showAddToPlaylistModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-6 w-96 max-h-96 overflow-y-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">添加到歌单</h3>
+                    <button @click="showAddToPlaylistModal = false" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="mb-4">
+                    <p class="text-sm text-gray-600 mb-3">已选择 {{ selectedTracks.length }} 首歌曲</p>
+                    
+                    <!-- 创建新歌单按钮 -->
+                    <button @click="showCreatePlaylistModal = true; showAddToPlaylistModal = false" 
+                            class="w-full mb-3 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+                        <i class="fas fa-plus mr-2"></i>创建新歌单
+                    </button>
+                    
+                    <!-- 现有歌单列表 -->
+                    <div v-if="userPlaylists.length > 0">
+                        <p class="text-sm font-medium text-gray-700 mb-2">选择现有歌单：</p>
+                        <div class="space-y-2 max-h-48 overflow-y-auto">
+                            <div v-for="playlist in userPlaylists" :key="playlist.id" 
+                                 @click="selectedPlaylistForAdd = playlist.id"
+                                 class="p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition"
+                                 :class="{'border-blue-500 bg-blue-50': selectedPlaylistForAdd === playlist.id}">
+                                <div class="flex justify-between items-start">
+                                    <div>
+                                        <p class="font-medium">{{ playlist.name }}</p>
+                                        <p class="text-sm text-gray-600">{{ playlist.total_tracks }} 首歌曲</p>
+                                        <div class="flex space-x-2 mt-1">
+                                            <span v-if="playlist.country" class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
+                                                {{ playlist.country }}
+                                            </span>
+                                            <span v-if="playlist.category" class="text-xs px-2 py-1 bg-purple-100 text-purple-800 rounded-full">
+                                                {{ playlist.category }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <input type="radio" 
+                                           :value="playlist.id" 
+                                           v-model="selectedPlaylistForAdd"
+                                           class="w-4 h-4 text-blue-600">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="text-center text-gray-500 py-4">
+                        <i class="fas fa-music text-2xl mb-2"></i>
+                        <p>还没有歌单，创建第一个吧！</p>
+                    </div>
+                </div>
+                
+                <div class="flex justify-end space-x-2">
+                    <button @click="showAddToPlaylistModal = false" 
+                            class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition">
+                        取消
+                    </button>
+                    <button @click="addSelectedToPlaylist" 
+                            :disabled="!selectedPlaylistForAdd"
+                            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition">
+                        添加到歌单
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 创建歌单模态框 -->
+        <div v-if="showCreatePlaylistModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-6 w-96 max-h-96 overflow-y-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">创建新歌单</h3>
+                    <button @click="showCreatePlaylistModal = false; showAddToPlaylistModal = true" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <form @submit.prevent="createPlaylist" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">歌单名称 *</label>
+                        <input v-model="newPlaylistData.name" 
+                               type="text" 
+                               required
+                               placeholder="输入歌单名称..."
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                        <textarea v-model="newPlaylistData.description" 
+                                  placeholder="描述这个歌单..."
+                                  rows="2"
+                                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">分类</label>
+                            <select v-model="newPlaylistData.category" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">选择分类...</option>
+                                <option v-for="cat in playlistCategories" :key="cat" :value="cat">{{ cat }}</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">国家</label>
+                            <select v-model="newPlaylistData.country" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">选择国家...</option>
+                                <option v-for="country in countryOptions" :key="country" :value="country">{{ country }}</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">语言</label>
+                            <select v-model="newPlaylistData.language" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">选择语言...</option>
+                                <option v-for="lang in languageOptions" :key="lang" :value="lang">{{ lang }}</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">情绪</label>
+                            <select v-model="newPlaylistData.mood" 
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">选择情绪...</option>
+                                <option v-for="mood in moodOptions" :key="mood" :value="mood">{{ mood }}</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
+                        <input v-model="newPlaylistData.tags" 
+                               type="text" 
+                               placeholder="输入标签，用逗号分隔..."
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    
+                    <div class="flex justify-end space-x-2 pt-4">
+                        <button type="button" 
+                                @click="showCreatePlaylistModal = false; showAddToPlaylistModal = true" 
+                                class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition">
+                            返回
+                        </button>
+                        <button type="submit" 
+                                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+                            创建歌单
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        
+        createApp({
+            data() {
+                return {
+                    activeTab: 'search',
+                    searchQuery: '',
+                    searchLimit: 100,
+                    searching: false,
+                    searchResults: [],
+                    searchType: null, // 'track', 'playlist', 'album'
+                    selectedTracks: [], // 选中的歌曲ID
+                    downloadingTracks: [], // 正在下载的歌曲ID
+                    streamingTracks: [], // 正在获取流媒体链接的歌曲ID
+                    
+                    // 搜索筛选选项
+                    showAdvancedFilters: false,
+                    searchFilters: {
+                        country: '',
+                        language: '',
+                        deduplicate: true,
+                        preview_only: false
+                    },
+                    
+                    // 搜索优化功能
+                    searchCache: new Map(), // 搜索结果缓存
+                    searchDebounceTimer: null, // 防抖定时器
+                    searchHistory: [], // 搜索历史
+                    showSearchHistory: false, // 显示搜索历史
+                    batchDownloading: false,
+                    batchDownloadProgress: {
+                        show: false,
+                        total: 0,
+                        completed: 0,
+                        current: '',
+                        failed: []
+                    },
+                    downloading: false,
+                    downloadForm: {
+                        url: '',
+                        format: 'mp3',
+                        quality: '320k'
+                    },
+                    downloadTasks: [],
+                    library: [],
+                    originalLibrary: [], // 原始音乐库数据
+                    librarySearch: '',
+                    libraryFilters: {
+                        genre: '',
+                        country: '',
+                        language: '',
+                        mood: ''
+                    },
+                    availableGenres: ['流行', '摇滚', '古典', '爵士', '电子', '民谣', '嘻哈', 'R&B', '乡村', '金属'],
+                    availableCountries: ['中国', '美国', '英国', '日本', '韩国', '其他'],
+                    availableLanguages: ['中文', '英文', '日语', '韩语', '其他'],
+                    availableMoods: ['快乐', '忧伤', '激昂', '浪漫', '放松'],
+                    currentTrack: null,
+                    playing: false,
+                    currentTime: 0,
+                    duration: 0,
+                    volume: 80,
+                    previewTimer: null, // 试听定时器
+                    systemInfo: {
+                        has_ffmpeg: false
+                    },
+                    playSettings: {
+                        previewDuration: 30, // 试听时长（秒）
+                        autoStop: true, // 是否自动停止试听
+                        streamPreviewMode: false // 流媒体试听模式
+                    },
+                    // 收藏列表功能
+                    favoriteLists: [], // 收藏列表
+                    currentFavoriteList: null, // 当前选中的收藏列表
+                    showCreateListModal: false, // 显示创建列表模态框
+                    newListName: '', // 新列表名称
+                    
+                    // 播放队列功能
+                    playQueue: [], // 播放队列
+                    currentQueueIndex: -1, // 当前播放索引
+                    shuffleMode: false, // 随机播放模式
+                    repeatMode: 'none', // 重复模式: none, all, single
+                    
+                    // 歌单管理功能
+                    userPlaylists: [], // 用户创建的歌单
+                    playlistsLoading: false, // 歌单列表加载状态
+                    playlistSongsLoading: {}, // 歌单歌曲加载状态
+                    showAddToPlaylistModal: false, // 显示添加到歌单的模态框
+                    showCreatePlaylistModal: false, // 显示创建歌单的模态框
+                    newPlaylistData: {
+                        name: '',
+                        description: '',
+                        category: '',
+                        country: '',
+                        language: '',
+                        mood: '',
+                        tags: ''
+                    },
+                    selectedPlaylistForAdd: null, // 选中要添加歌曲的歌单
+                    playlistCategories: [
+                        '韩国流行', '日本动漫', '欧美经典', '中文流行', 
+                        '电子音乐', '摇滚金属', '民谣轻音乐', '古典音乐'
+                    ],
+                    countryOptions: [
+                        '韩国', '日本', '中国', '台湾', '香港', '美国', 
+                        '英国', '德国', '法国', '其他'
+                    ],
+                    
+                    // 图片懒加载状态管理
+                    imageStates: {}, // 图片加载状态
+                    defaultAlbumArt: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDIwMCAyMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xMDAgNjBDODkuMzkxMyA2MCA4MC44Njk2IDY4LjQyMTQgODAuODY5NiA3OC43NVY5MS44NzVDODAuODY5NiA5Mi45MTA1IDgxLjY5NTcgOTMuNzUgODIuNzE3NCA5My43NUg4NC41NjUyQzg1LjU4NyA5My43NSA4Ni40MTMgOTIuOTEwNSA4Ni40MTMgOTEuODc1Vjc4Ljc1Qzg2LjQxMyA3MS41MzI5IDkyLjQ1NjUgNjUuNjI1IDEwMCA2NS42MjVDMTA3LjU0MyA2NS42MjUgMTEzLjU4NyA3MS41MzI5IDExMy41ODcgNzguNzVWMTIxLjI1QzExMy41ODcgMTI4LjQ2NyAxMDcuNTQzIDEzNC4zNzUgMTAwIDEzNC4zNzVDOTIuNDU2NSAxMzQuMzc1IDg2LjQxMyAxMjguNDY3IDg2LjQxMyAxMjEuMjVWMTA4LjEyNUM4Ni40MTMgMTA3LjA4OSA4NS41ODcgMTA2LjI1IDg0LjU2NTIgMTA2LjI1SDgyLjcxNzRDODEuNjk1NyAxMDYuMjUgODAuODY5NiAxMDcuMDg5IDgwLjg2OTYgMTA4LjEyNVYxMjEuMjVDODAuODY5NiAxMzEuNTc5IDg5LjM5MTMgMTQwIDEwMCAxNDBDMTEwLjYwOSAxNDAgMTE5LjEzIDEzMS41NzkgMTE5LjEzIDEyMS4yNVY3OC43NUMxMTkuMTMgNjguNDIxNCAxMTAuNjA5IDYwIDEwMCA2MFoiIGZpbGw9IiM5Q0EzQUYiLz4KPGNpcmNsZSBjeD0iMTAwIiBjeT0iMTAwIiByPSI2MCIgc3Ryb2tlPSIjOUNBM0FGIiBzdHJva2Utd2lkdGg9IjIiIGZpbGw9Im5vbmUiLz4KPC9zdmc+', // 默认专辑封面 SVG
+                    imageObserver: null, // Intersection Observer 实例
+                    languageOptions: [
+                        '韩语', '日语', '中文', '粤语', '英语', 
+                        '西班牙语', '法语', '德语', '其他'
+                    ],
+                    moodOptions: [
+                        '快乐', '忧伤', '激昂', '浪漫', '放松'
+                    ]
+                }
+            },
+            mounted() {
+                this.loadSystemInfo();
+                this.loadDownloadTasks();
+                this.loadLibrary();
+                this.loadSettings();
+                this.loadFavoriteListsFromStorage();
+                this.loadUserPlaylists();
+                this.loadSearchHistory();
+                this.startPolling();
+                
+                // 初始化图片懒加载观察器
+                this.initImageObserver();
+                
+                // 定期清理过期缓存
+                setInterval(() => {
+                    this.cleanExpiredCache();
+                    this.cleanImageStates();
+                }, 5 * 60 * 1000); // 每5分钟清理一次
+            },
+            
+            beforeUnmount() {
+                // 清理 Intersection Observer
+                if (this.imageObserver) {
+                    this.imageObserver.disconnect();
+                }
+            },
+            
+            methods: {
+                // 图片懒加载相关方法
+                onImageLoad(imageId) {
+                    this.imageStates[imageId] = { loaded: true, error: false };
+                },
+                
+                onImageError(imageId, event) {
+                    const retryCount = this.imageStates[imageId]?.retryCount || 0;
+                    
+                    if (retryCount < 2) {
+                        // 重试加载
+                        this.imageStates[imageId] = { 
+                            loaded: false, 
+                            error: false, 
+                            retryCount: retryCount + 1 
+                        };
+                        
+                        // 延迟重试
+                        setTimeout(() => {
+                            if (event && event.target) {
+                                const img = event.target;
+                                const originalSrc = img.src;
+                                img.src = '';
+                                img.src = originalSrc;
+                            }
+                        }, 1000 * (retryCount + 1));
+                    } else {
+                        // 超过重试次数，显示错误状态
+                        this.imageStates[imageId] = { loaded: false, error: true, retryCount };
+                    }
+                },
+                
+                resetImageState(imageId) {
+                    if (this.imageStates[imageId]) {
+                        delete this.imageStates[imageId];
+                    }
+                },
+                
+                // 预加载图片
+                preloadImage(url) {
+                    if (!url || url === this.defaultAlbumArt) return;
+                    const img = new Image();
+                    img.src = url;
+                },
+                
+                // 批量预加载图片
+                preloadImages(items, keyPath = 'album_art') {
+                    if (!items || !Array.isArray(items)) return;
+                    items.forEach(item => {
+                        const url = keyPath.split('.').reduce((obj, key) => obj?.[key], item);
+                        if (url) this.preloadImage(url);
+                    });
+                },
+                
+                // 初始化图片观察器
+                initImageObserver() {
+                    if ('IntersectionObserver' in window) {
+                        this.imageObserver = new IntersectionObserver(
+                            (entries) => {
+                                entries.forEach(entry => {
+                                    if (entry.isIntersecting) {
+                                        const img = entry.target;
+                                        const src = img.dataset.src;
+                                        if (src && !img.src) {
+                                            img.src = src;
+                                            this.imageObserver.unobserve(img);
+                                        }
+                                    }
+                                });
+                            },
+                            {
+                                rootMargin: '50px 0px',
+                                threshold: 0.01
+                            }
+                        );
+                    }
+                },
+                
+                // 观察图片元素
+                observeImage(element) {
+                    if (this.imageObserver && element) {
+                        this.imageObserver.observe(element);
+                    }
+                },
+                
+                // 清理图片状态缓存
+                cleanImageStates() {
+                    const maxStates = 200; // 最多保留200个图片状态
+                    const keys = Object.keys(this.imageStates);
+                    
+                    if (keys.length > maxStates) {
+                        // 删除最早的状态
+                        const toRemove = keys.slice(0, keys.length - maxStates);
+                        toRemove.forEach(key => {
+                            delete this.imageStates[key];
+                        });
+                    }
+                },
+                
+                // 优化版本的 searchMusic 函数，包含防抖、缓存和搜索历史
+                async searchMusic() {
+                    if (!this.searchQuery) return;
+                    
+                    // 检查缓存
+                    const cacheKey = `search_${this.searchQuery}_${this.searchLimit}`;
+                    const cached = this.searchCache.get(cacheKey);
+                    if (cached) {
+                        this.searchResults = cached.results;
+                        this.searchType = cached.type;
+                        this.selectedTracks = [];
+                        return;
+                    }
+                    
+                    this.searching = true;
+                    this.searchResults = [];
+                    this.selectedTracks = [];
+                    this.searchType = null;
+                    
+                    try {
+                        let results, type;
+                        
+                        // 如果是 Spotify 链接，直接解析
+                        if (this.searchQuery.includes('spotify.com')) {
+                            const response = await axios.post('/api/spotify/parse', {
+                                url: this.searchQuery
+                            });
+                            
+                            const result = response.data;
+                            type = result.type;
+                            
+                            if (result.type === 'track') {
+                                results = [result.data];
+                            } else if (result.type === 'playlist' || result.type === 'album') {
+                                results = result.tracks;
+                                // 显示播放列表/专辑信息
+                                if (result.type === 'playlist') {
+                                    this.$nextTick(() => {
+                                        alert(`找到播放列表: ${result.name}\n包含 ${result.total_tracks} 首歌曲\n可使用批量下载功能`);
+                                    });
+                                } else {
+                                    this.$nextTick(() => {
+                                        alert(`找到专辑: ${result.name}\n艺术家: ${result.artist}\n包含 ${result.total_tracks} 首歌曲\n可使用批量下载功能`);
+                                    });
+                                }
+                            }
+                        } else {
+                            // 否则搜索歌曲
+                            type = 'search';
+                            const response = await axios.get('/api/spotify/search', {
+                                params: { 
+                                    q: this.searchQuery,
+                                    limit: this.searchLimit,
+                                    country_filter: this.searchFilters.country || null,
+                                    language_filter: this.searchFilters.language || null,
+                                    deduplicate: this.searchFilters.deduplicate,
+                                    preview_only: this.searchFilters.preview_only
+                                }
+                            });
+                            results = response.data.tracks || [];
+                        }
+                        
+                        // 保存搜索结果
+                        this.searchResults = results;
+                        this.searchType = type;
+                        
+                        // 缓存结果
+                        this.searchCache.set(cacheKey, {
+                            results: results,
+                            type: type,
+                            timestamp: Date.now()
+                        });
+                        
+                        // 添加到搜索历史
+                        this.addToSearchHistory(this.searchQuery);
+                        
+                    } catch (error) {
+                        alert('搜索失败: ' + (error.response?.data?.detail || error.message));
+                    } finally {
+                        this.searching = false;
+                    }
+                },
+                
+                async searchCountryTop(country) {
+                    this.searching = true;
+                    this.searchResults = [];
+                    this.selectedTracks = [];
+                    this.searchType = 'country-top';
+                    
+                    try {
+                        const response = await axios.get('/api/spotify/country-top', {
+                            params: { 
+                                country: country,
+                                limit: this.searchLimit
+                            }
+                        });
+                        
+                        this.searchResults = response.data.tracks || [];
+                        
+                        // 预加载搜索结果中的图片
+                        this.preloadImages(this.searchResults.slice(0, 20), 'album_art');
+                        
+                        // 显示搜索信息
+                        const countryNames = {
+                            'korea': '韩国',
+                            'japan': '日本',
+                            'turkey': '土耳其',
+                            'usa': '欧美',
+                            'uk': '英国',
+                            'china': '华语',
+                            'taiwan': '台湾',
+                            'europe': '欧洲'
+                        };
+                        
+                        const countryName = countryNames[country] || country;
+                        this.searchQuery = `${countryName}热门音乐`;
+                        
+                        console.log(`找到 ${this.searchResults.length} 首${countryName}热门歌曲`);
+                        
+                    } catch (error) {
+                        alert('获取热门音乐失败: ' + (error.response?.data?.detail || error.message));
+                    } finally {
+                        this.searching = false;
+                    }
+                },
+                
+                async downloadTrack(track) {
+                    // 添加到下载中列表
+                    this.downloadingTracks.push(track.id);
+                    
+                    try {
+                        const response = await axios.post('/api/download', {
+                            url: track.spotify_url || track.url,
+                            format: this.downloadForm.format,
+                            quality: this.downloadForm.quality,
+                            metadata: {
+                                title: track.title,
+                                artist: track.artist,
+                                album: track.album,
+                                album_art: track.album_art,
+                                preview_url: track.preview_url,
+                                duration: track.duration,
+                                year: track.year,
+                                country: track.country,
+                                language: track.language,
+                                spotify_id: track.id,
+                                spotify_url: track.spotify_url || track.url
+                            }
+                        });
+                        
+                        // 显示成功消息
+                        this.$nextTick(() => {
+                            alert('下载任务已创建！');
+                        });
+                        this.loadDownloadTasks();
+                    } catch (error) {
+                        alert('下载失败: ' + (error.response?.data?.detail || error.message));
+                    } finally {
+                        // 从下载中列表移除
+                        const index = this.downloadingTracks.indexOf(track.id);
+                        if (index > -1) {
+                            this.downloadingTracks.splice(index, 1);
+                        }
+                    }
+                },
+                
+                async startDownload() {
+                    if (!this.downloadForm.url) {
+                        alert('请输入下载链接');
+                        return;
+                    }
+                    
+                    this.downloading = true;
+                    try {
+                        const response = await axios.post('/api/download', this.downloadForm);
+                        alert('下载任务已创建！');
+                        this.downloadForm.url = '';
+                        this.loadDownloadTasks();
+                    } catch (error) {
+                        alert('下载失败: ' + (error.response?.data?.detail || error.message));
+                    } finally {
+                        this.downloading = false;
+                    }
+                },
+                
+                async loadDownloadTasks() {
+                    try {
+                        const response = await axios.get('/api/tasks?per_page=20');
+                        this.downloadTasks = response.data.items || [];
+                    } catch (error) {
+                        console.error('Failed to load tasks:', error);
+                    }
+                },
+                
+                async loadLibrary() {
+                    try {
+                        const response = await axios.get('/api/songs?per_page=50');
+                        this.originalLibrary = response.data.items || [];
+                        this.library = [...this.originalLibrary];
+                        
+                        // 预加载音乐库中的图片
+                        this.preloadImages(this.library.slice(0, 20), 'album_art_url');
+                        
+                        // 生成可用的筛选选项
+                        this.generateFilterOptions();
+                        this.filterLibrary();
+                        
+                        console.log('音乐库加载完成:', this.originalLibrary.length, '首歌曲');
+                    } catch (error) {
+                        console.error('Failed to load library:', error);
+                    }
+                },
+                
+                generateFilterOptions() {
+                    // 从现有数据生成筛选选项
+                    const genres = new Set();
+                    const countries = new Set();
+                    const languages = new Set();
+                    const moods = new Set();
+                    
+                    this.originalLibrary.forEach(song => {
+                        if (song.genre) genres.add(song.genre);
+                        if (song.country) countries.add(song.country);
+                        if (song.language) languages.add(song.language);
+                        if (song.mood) moods.add(song.mood);
+                    });
+                    
+                    // 更新可用选项，但保留默认选项
+                    this.availableGenres = [...this.availableGenres, ...Array.from(genres)];
+                    this.availableCountries = Array.from(countries);
+                    this.availableLanguages = Array.from(languages);
+                    this.availableMoods = Array.from(moods);
+                    
+                    console.log('筛选选项:', {
+                        genres: this.availableGenres.length,
+                        countries: this.availableCountries.length,
+                        languages: this.availableLanguages.length,
+                        moods: this.availableMoods.length
+                    });
+                },
+                
+                filterLibrary() {
+                    let filtered = [...this.originalLibrary];
+                    console.log('开始筛选，原始数据:', filtered.length, '首歌曲');
+                    
+                    // 文本搜索
+                    if (this.librarySearch && this.librarySearch.trim()) {
+                        const search = this.librarySearch.toLowerCase().trim();
+                        filtered = filtered.filter(song => 
+                            song.title?.toLowerCase().includes(search) ||
+                            song.artist?.toLowerCase().includes(search) ||
+                            song.album?.toLowerCase().includes(search)
+                        );
+                        console.log('文本搜索后:', filtered.length, '首歌曲');
+                    }
+                    
+                    // 流派过滤
+                    if (this.libraryFilters.genre) {
+                        filtered = filtered.filter(song => song.genre === this.libraryFilters.genre);
+                        console.log('流派筛选后:', filtered.length, '首歌曲');
+                    }
+                    
+                    // 国家过滤
+                    if (this.libraryFilters.country) {
+                        filtered = filtered.filter(song => song.country === this.libraryFilters.country);
+                        console.log('国家筛选后:', filtered.length, '首歌曲');
+                    }
+                    
+                    // 语言过滤
+                    if (this.libraryFilters.language) {
+                        filtered = filtered.filter(song => song.language === this.libraryFilters.language);
+                        console.log('语言筛选后:', filtered.length, '首歌曲');
+                    }
+                    
+                    // 情绪过滤
+                    if (this.libraryFilters.mood) {
+                        filtered = filtered.filter(song => song.mood === this.libraryFilters.mood);
+                        console.log('情绪筛选后:', filtered.length, '首歌曲');
+                    }
+                    
+                    this.library = filtered;
+                    console.log('最终筛选结果:', this.library.length, '首歌曲');
+                },
+                
+                async loadSystemInfo() {
+                    try {
+                        const response = await axios.get('/api/system-info');
+                        this.systemInfo = response.data;
+                    } catch (error) {
+                        console.error('Failed to load system info:', error);
+                    }
+                },
+                
+                playPreview(track) {
+                    if (!track.preview_url) return;
+                    
+                    // 清除之前的定时器
+                    if (this.previewTimer) {
+                        clearTimeout(this.previewTimer);
+                        this.previewTimer = null;
+                    }
+                    
+                    this.currentTrack = {
+                        ...track,
+                        playType: 'preview' // 标记为试听模式
+                    };
+                    this.$refs.audioPlayer.src = track.preview_url;
+                    this.$refs.audioPlayer.play();
+                    this.playing = true;
+                    
+                    console.log('🎵 开始试听播放:', track.title);
+                },
+                
+                async playDirectStream(track) {
+                    // 添加到流媒体获取中列表
+                    this.streamingTracks.push(track.id);
+                    
+                    try {
+                        const query = `${track.artist} ${track.title}`;
+                        const response = await axios.post('/api/get-stream-url', {
+                            query: query
+                        });
+                        
+                        if (response.data.success) {
+                            // 设置当前播放轨道
+                            this.currentTrack = {
+                                ...track,
+                                stream_url: response.data.stream_url,
+                                playType: 'stream' // 标记为流媒体播放
+                            };
+                            
+                            // 播放流媒体
+                            this.$refs.audioPlayer.src = response.data.stream_url;
+                            this.$refs.audioPlayer.play();
+                            this.playing = true;
+                            
+                            // 如果启用了流媒体试听模式，设置自动停止
+                            if (this.playSettings.streamPreviewMode && this.playSettings.autoStop) {
+                                // 清除之前的定时器
+                                if (this.previewTimer) {
+                                    clearTimeout(this.previewTimer);
+                                }
+                                
+                                // 设置新的定时器
+                                this.previewTimer = setTimeout(() => {
+                                    if (this.currentTrack && this.currentTrack.playType === 'stream') {
+                                        this.$refs.audioPlayer.pause();
+                                        this.playing = false;
+                                        console.log(`🔕 流媒体试听结束 (${this.playSettings.previewDuration}秒):`, track.title);
+                                    }
+                                }, this.playSettings.previewDuration * 1000);
+                                
+                                console.log(`🎵 开始流媒体试听播放 (${this.playSettings.previewDuration}秒):`, track.title);
+                            } else {
+                                console.log('🎵 开始流媒体播放:', track.title);
+                            }
+                        } else {
+                            alert('获取播放链接失败: ' + response.data.error);
+                        }
+                    } catch (error) {
+                        alert('播放失败: ' + (error.response?.data?.detail || error.message));
+                        console.error('Stream play error:', error);
+                    } finally {
+                        // 从流媒体获取中列表移除
+                        const index = this.streamingTracks.indexOf(track.id);
+                        if (index > -1) {
+                            this.streamingTracks.splice(index, 1);
+                        }
+                    }
+                },
+                
+                playSong(song) {
+                    if (!song.file_path) {
+                        alert('歌曲文件不存在，请先下载');
+                        return;
+                    }
+                    
+                    // 清除之前的定时器
+                    if (this.previewTimer) {
+                        clearTimeout(this.previewTimer);
+                        this.previewTimer = null;
+                    }
+                    
+                    this.currentTrack = {
+                        ...song,
+                        playType: 'local' // 标记为本地文件播放
+                    };
+                    this.$refs.audioPlayer.src = `/api/stream/${song.id}`;
+                    this.$refs.audioPlayer.play();
+                    this.playing = true;
+                    
+                    console.log('🎵 开始本地文件播放:', song.title);
+                },
+                
+                togglePlay() {
+                    if (this.playing) {
+                        this.$refs.audioPlayer.pause();
+                        // 清除试听定时器
+                        if (this.previewTimer) {
+                            clearTimeout(this.previewTimer);
+                            this.previewTimer = null;
+                        }
+                    } else {
+                        this.$refs.audioPlayer.play();
+                    }
+                    this.playing = !this.playing;
+                },
+                
+                previousTrack() {
+                    // 如果有播放队列
+                    if (this.playQueue.length > 0) {
+                        let newIndex = this.currentQueueIndex - 1;
+                        
+                        // 如果是第一首，根据重复模式处理
+                        if (newIndex < 0) {
+                            if (this.repeatMode === 'all') {
+                                newIndex = this.playQueue.length - 1;
+                            } else {
+                                return; // 停止
+                            }
+                        }
+                        
+                        this.playFromQueue(newIndex);
+                    }
+                },
+                
+                nextTrack() {
+                    // 如果有播放队列
+                    if (this.playQueue.length > 0) {
+                        // 单曲循环模式：重复播放当前歌曲
+                        if (this.repeatMode === 'single') {
+                            this.playFromQueue(this.currentQueueIndex);
+                            return;
+                        }
+                        
+                        let newIndex = this.currentQueueIndex + 1;
+                        
+                        // 如果是最后一首，根据重复模式处理
+                        if (newIndex >= this.playQueue.length) {
+                            if (this.repeatMode === 'all') {
+                                newIndex = 0;
+                            } else if (this.shuffleMode) {
+                                // 随机模式下重新打乱
+                                this.playQueue = this.shuffleArray(this.playQueue);
+                                newIndex = 0;
+                            } else {
+                                // 播放结束
+                                this.playQueue = [];
+                                this.currentQueueIndex = -1;
+                                return;
+                            }
+                        }
+                        
+                        this.playFromQueue(newIndex);
+                    }
+                },
+                
+                seekTo(event) {
+                    this.$refs.audioPlayer.currentTime = event.target.value;
+                },
+                
+                changeVolume(event) {
+                    this.$refs.audioPlayer.volume = event.target.value / 100;
+                },
+                
+                updateTime() {
+                    this.currentTime = this.$refs.audioPlayer.currentTime;
+                },
+                
+                onLoadedMetadata() {
+                    this.duration = this.$refs.audioPlayer.duration;
+                },
+                
+                onEnded() {
+                    this.playing = false;
+                    this.nextTrack();
+                },
+                
+                formatTime(seconds) {
+                    if (!seconds) return '0:00';
+                    const mins = Math.floor(seconds / 60);
+                    const secs = Math.floor(seconds % 60);
+                    return `${mins}:${secs.toString().padStart(2, '0')}`;
+                },
+                
+                getStatusColor(status) {
+                    const colors = {
+                        'pending': 'bg-yellow-100 text-yellow-800',
+                        'processing': 'bg-blue-100 text-blue-800',
+                        'downloading': 'bg-blue-100 text-blue-800',
+                        'completed': 'bg-green-100 text-green-800',
+                        'failed': 'bg-red-100 text-red-800'
+                    };
+                    return colors[status] || 'bg-gray-100 text-gray-800';
+                },
+                
+                getStatusText(status) {
+                    const texts = {
+                        'pending': '等待中',
+                        'processing': '处理中',
+                        'downloading': '下载中',
+                        'completed': '已完成',
+                        'failed': '失败'
+                    };
+                    return texts[status] || status;
+                },
+                
+                formatDate(dateString) {
+                    if (!dateString) return '-';
+                    return new Date(dateString).toLocaleString('zh-CN');
+                },
+                
+                formatDuration(seconds) {
+                    if (!seconds) return '';
+                    const mins = Math.floor(seconds / 60);
+                    const secs = seconds % 60;
+                    return `${mins}:${secs.toString().padStart(2, '0')}`;
+                },
+                
+                selectAllTracks() {
+                    if (this.selectedTracks.length === this.searchResults.length) {
+                        // 如果已全选，则取消全选
+                        this.selectedTracks = [];
+                    } else {
+                        // 否则全选
+                        this.selectedTracks = this.searchResults.map(track => track.id);
+                    }
+                },
+                
+                async downloadSelectedTracks() {
+                    if (this.selectedTracks.length === 0) {
+                        alert('请先选择要下载的歌曲');
+                        return;
+                    }
+                    
+                    this.batchDownloading = true;
+                    this.batchDownloadProgress = {
+                        show: true,
+                        total: this.selectedTracks.length,
+                        completed: 0,
+                        current: '',
+                        failed: []
+                    };
+                    
+                    for (const trackId of this.selectedTracks) {
+                        const track = this.searchResults.find(t => t.id === trackId);
+                        if (!track) continue;
+                        
+                        this.batchDownloadProgress.current = `${track.artist} - ${track.title}`;
+                        
+                        try {
+                            await axios.post('/api/download', {
+                                url: track.spotify_url || track.url,
+                                format: this.downloadForm.format,
+                                quality: this.downloadForm.quality,
+                                metadata: {
+                                    title: track.title,
+                                    artist: track.artist,
+                                    album: track.album,
+                                    album_art: track.album_art
+                                }
+                            });
+                            
+                            this.batchDownloadProgress.completed++;
+                        } catch (error) {
+                            this.batchDownloadProgress.failed.push({
+                                track: `${track.artist} - ${track.title}`,
+                                error: error.response?.data?.detail || error.message
+                            });
+                            this.batchDownloadProgress.completed++;
+                        }
+                        
+                        // 短暂延迟以避免过快请求
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                    
+                    this.batchDownloading = false;
+                    this.batchDownloadProgress.current = '';
+                    
+                    // 显示完成消息
+                    const successCount = this.batchDownloadProgress.completed - this.batchDownloadProgress.failed.length;
+                    const failedCount = this.batchDownloadProgress.failed.length;
+                    
+                    let message = `批量下载完成！\n成功: ${successCount} 首`;
+                    if (failedCount > 0) {
+                        message += `\n失败: ${failedCount} 首`;
+                    }
+                    alert(message);
+                    
+                    this.loadDownloadTasks();
+                    
+                    // 5秒后隐藏进度条
+                    setTimeout(() => {
+                        this.batchDownloadProgress.show = false;
+                    }, 5000);
+                },
+                
+                getShortFilename(filePath) {
+                    if (!filePath) return '无文件';
+                    const filename = filePath.split('/').pop() || filePath.split('\\').pop();
+                    return filename || '无文件';
+                },
+                
+                getFileFormat(filePath) {
+                    if (!filePath) return null;
+                    const ext = filePath.split('.').pop()?.toLowerCase();
+                    const formatMap = {
+                        'mp3': 'MP3',
+                        'webm': 'WebM',
+                        'm4a': 'M4A',
+                        'opus': 'Opus',
+                        'aac': 'AAC',
+                        'mp4': 'MP4',
+                        'flac': 'FLAC'
+                    };
+                    return formatMap[ext] || ext?.toUpperCase();
+                },
+                
+                getFormatColor(format) {
+                    const colors = {
+                        'MP3': 'bg-green-100 text-green-800',
+                        'WebM': 'bg-blue-100 text-blue-800',
+                        'M4A': 'bg-purple-100 text-purple-800',
+                        'Opus': 'bg-indigo-100 text-indigo-800',
+                        'AAC': 'bg-yellow-100 text-yellow-800',
+                        'FLAC': 'bg-pink-100 text-pink-800',
+                        'MP4': 'bg-orange-100 text-orange-800'
+                    };
+                    return colors[format] || 'bg-gray-100 text-gray-800';
+                },
+                
+                formatFileSize(bytes) {
+                    if (!bytes) return '未知';
+                    const sizes = ['B', 'KB', 'MB', 'GB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+                    return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
+                },
+                
+                getPlayModeText() {
+                    if (!this.currentTrack) return '';
+                    switch(this.currentTrack.playType) {
+                        case 'stream': return '直播流媒体';
+                        case 'local': return '本地文件';
+                        case 'preview': return 'Spotify 试听';
+                        default: return '未知模式';
+                    }
+                },
+                
+                getPlayModeIcon() {
+                    if (!this.currentTrack) return '';
+                    switch(this.currentTrack.playType) {
+                        case 'stream': return 'fas fa-wifi';
+                        case 'local': return 'fas fa-hdd';
+                        case 'preview': return 'fas fa-headphones';
+                        default: return 'fas fa-question';
+                    }
+                },
+                
+                getPlayModeColor() {
+                    if (!this.currentTrack) return '';
+                    switch(this.currentTrack.playType) {
+                        case 'stream': return 'text-purple-600';
+                        case 'local': return 'text-green-600';
+                        case 'preview': return 'text-blue-600';
+                        default: return 'text-gray-600';
+                    }
+                },
+                
+                getTaskTitle(task) {
+                    return task.metadata?.title || task.title || '未知歌曲';
+                },
+                
+                getTaskArtist(task) {
+                    return task.metadata?.artist || task.artist || '未知艺术家';
+                },
+                
+                getTaskAlbum(task) {
+                    return task.metadata?.album || task.album || '未知专辑';
+                },
+                
+                async deleteSong(song) {
+                    if (!confirm('确定要删除这首歌吗？')) return;
+                    
+                    try {
+                        await axios.delete(`/api/songs/${song.id}`);
+                        this.loadLibrary();
+                    } catch (error) {
+                        alert('删除失败: ' + (error.response?.data?.detail || error.message));
+                    }
+                },
+                
+                // 收藏列表相关方法
+                addToFavorites(track) {
+                    if (this.favoriteLists.length === 0) {
+                        // 如果没有收藏列表，创建默认列表
+                        this.createDefaultFavoriteList();
+                    }
+                    
+                    // 显示选择列表的弹窗
+                    this.showFavoriteListSelector(track);
+                },
+                
+                createDefaultFavoriteList() {
+                    const defaultList = {
+                        id: 'default',
+                        name: '我的收藏',
+                        tracks: [],
+                        created_at: new Date().toISOString()
+                    };
+                    this.favoriteLists.push(defaultList);
+                    this.saveFavoriteListsToStorage();
+                },
+                
+                showFavoriteListSelector(track) {
+                    // 简单实现：直接加入到第一个列表
+                    if (this.favoriteLists.length > 0) {
+                        this.addTrackToList(track, this.favoriteLists[0]);
+                    }
+                },
+                
+                addTrackToList(track, list) {
+                    // 检查是否已存在
+                    const exists = list.tracks.some(t => t.id === track.id);
+                    if (exists) {
+                        alert(`"${track.title}" 已在收藏列表 "${list.name}" 中`);
+                        return;
+                    }
+                    
+                    // 添加到列表
+                    list.tracks.push({
+                        id: track.id,
+                        title: track.title,
+                        artist: track.artist,
+                        album: track.album,
+                        album_art: track.album_art,
+                        preview_url: track.preview_url,
+                        spotify_url: track.spotify_url || track.url,
+                        duration: track.duration,
+                        added_at: new Date().toISOString()
+                    });
+                    
+                    this.saveFavoriteListsToStorage();
+                    alert(`"${track.title}" 已添加到收藏列表 "${list.name}"`);
+                },
+                
+                createNewFavoriteList() {
+                    if (!this.newListName.trim()) {
+                        alert('请输入列表名称');
+                        return;
+                    }
+                    
+                    const newList = {
+                        id: Date.now().toString(),
+                        name: this.newListName.trim(),
+                        tracks: [],
+                        created_at: new Date().toISOString()
+                    };
+                    
+                    this.favoriteLists.push(newList);
+                    this.saveFavoriteListsToStorage();
+                    this.newListName = '';
+                    this.showCreateListModal = false;
+                    
+                    alert(`收藏列表 "${newList.name}" 创建成功`);
+                },
+                
+                deleteFavoriteList(list) {
+                    if (!confirm(`确定要删除收藏列表 "${list.name}" 吗？`)) return;
+                    
+                    const index = this.favoriteLists.findIndex(l => l.id === list.id);
+                    if (index > -1) {
+                        this.favoriteLists.splice(index, 1);
+                        this.saveFavoriteListsToStorage();
+                        if (this.currentFavoriteList && this.currentFavoriteList.id === list.id) {
+                            this.currentFavoriteList = null;
+                        }
+                    }
+                },
+                
+                removeTrackFromList(track, list) {
+                    if (!confirm(`确定要从 "${list.name}" 中移除 "${track.title}" 吗？`)) return;
+                    
+                    const index = list.tracks.findIndex(t => t.id === track.id);
+                    if (index > -1) {
+                        list.tracks.splice(index, 1);
+                        this.saveFavoriteListsToStorage();
+                    }
+                },
+                
+                saveFavoriteListsToStorage() {
+                    localStorage.setItem('favoriteLists', JSON.stringify(this.favoriteLists));
+                },
+                
+                loadFavoriteListsFromStorage() {
+                    const saved = localStorage.getItem('favoriteLists');
+                    if (saved) {
+                        this.favoriteLists = JSON.parse(saved);
+                    }
+                },
+                
+                addSongToFavorites(song) {
+                    // 将数据库中的歌曲转换为收藏格式
+                    const track = {
+                        id: song.spotify_id || song.id,
+                        title: song.title,
+                        artist: song.artist,
+                        album: song.album,
+                        album_art: song.album_art_url,
+                        preview_url: song.preview_url,
+                        spotify_url: song.spotify_url,
+                        duration: song.duration
+                    };
+                    
+                    this.addToFavorites(track);
+                },
+                
+                async clearDownloadTasks(status = null) {
+                    const statusText = status === 'failed' ? '失败' : (status === 'completed' ? '成功' : '所有');
+                    if (!confirm(`确定要清除${statusText}的下载记录吗？`)) return;
+                    
+                    try {
+                        const url = status ? `/api/tasks/clear?status=${status}` : '/api/tasks/clear';
+                        const response = await axios.delete(url);
+                        
+                        if (response.data.success) {
+                            alert(response.data.message);
+                            this.loadDownloadTasks(); // 刷新列表
+                        } else {
+                            alert('清除失败');
+                        }
+                    } catch (error) {
+                        alert('清除失败: ' + (error.response?.data?.detail || error.message));
+                    }
+                },
+                
+                // 播放队列相关方法
+                playAllInList(list) {
+                    if (list.tracks.length === 0) {
+                        alert('播放列表为空');
+                        return;
+                    }
+                    
+                    // 设置播放队列
+                    this.playQueue = [...list.tracks];
+                    this.currentQueueIndex = 0;
+                    this.shuffleMode = false;
+                    
+                    // 播放第一首
+                    this.playFromQueue(0);
+                    
+                    console.log(`开始播放列表 "${list.name}"，共 ${list.tracks.length} 首歌曲`);
+                },
+                
+                shufflePlayList(list) {
+                    if (list.tracks.length === 0) {
+                        alert('播放列表为空');
+                        return;
+                    }
+                    
+                    // 打乱队列
+                    this.playQueue = this.shuffleArray([...list.tracks]);
+                    this.currentQueueIndex = 0;
+                    this.shuffleMode = true;
+                    
+                    // 播放第一首
+                    this.playFromQueue(0);
+                    
+                    console.log(`开始随机播放列表 "${list.name}"，共 ${list.tracks.length} 首歌曲`);
+                },
+                
+                async downloadAllInList(list) {
+                    if (list.tracks.length === 0) {
+                        alert('播放列表为空');
+                        return;
+                    }
+                    
+                    if (!confirm(`确定要下载列表 "${list.name}" 中的所有 ${list.tracks.length} 首歌曲吗？`)) {
+                        return;
+                    }
+                    
+                    // 批量下载逻辑（类似批量下载搜索结果）
+                    this.batchDownloading = true;
+                    this.batchDownloadProgress = {
+                        show: true,
+                        total: list.tracks.length,
+                        completed: 0,
+                        current: '',
+                        failed: []
+                    };
+                    
+                    for (const track of list.tracks) {
+                        this.batchDownloadProgress.current = `${track.artist} - ${track.title}`;
+                        
+                        try {
+                            await axios.post('/api/download', {
+                                url: track.spotify_url,
+                                format: this.downloadForm.format,
+                                quality: this.downloadForm.quality,
+                                metadata: {
+                                    title: track.title,
+                                    artist: track.artist,
+                                    album: track.album,
+                                    album_art: track.album_art
+                                }
+                            });
+                            
+                            this.batchDownloadProgress.completed++;
+                        } catch (error) {
+                            this.batchDownloadProgress.failed.push(track.title);
+                            console.error(`下载失败: ${track.title}`, error);
+                        }
+                    }
+                    
+                    this.batchDownloading = false;
+                    
+                    // 显示结果
+                    const message = `下载完成！成功: ${this.batchDownloadProgress.completed}/${this.batchDownloadProgress.total}`;
+                    if (this.batchDownloadProgress.failed.length > 0) {
+                        alert(message + `\n失败: ${this.batchDownloadProgress.failed.join(', ')}`);
+                    } else {
+                        alert(message);
+                    }
+                    
+                    // 刷新下载任务列表
+                    this.loadDownloadTasks();
+                },
+                
+                playFromQueue(index) {
+                    if (index < 0 || index >= this.playQueue.length) {
+                        return;
+                    }
+                    
+                    this.currentQueueIndex = index;
+                    const track = this.playQueue[index];
+                    
+                    // 优先尝试试听
+                    if (track.preview_url) {
+                        this.playPreview(track);
+                    } else {
+                        // 尝试流媒体播放
+                        this.playDirectStream(track);
+                    }
+                },
+                
+                shuffleArray(array) {
+                    const shuffled = [...array];
+                    for (let i = shuffled.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+                    }
+                    return shuffled;
+                },
+                
+                startPolling() {
+                    // 每5秒刷新一次下载任务状态
+                    setInterval(() => {
+                        if (this.activeTab === 'downloads') {
+                            this.loadDownloadTasks();
+                        }
+                    }, 5000);
+                },
+                
+                saveSettings() {
+                    // 保存设置到本地存储
+                    localStorage.setItem('playSettings', JSON.stringify(this.playSettings));
+                    alert('设置已保存！');
+                    console.log('播放设置已保存:', this.playSettings);
+                },
+                
+                loadSettings() {
+                    // 从本地存储加载设置
+                    const saved = localStorage.getItem('playSettings');
+                    if (saved) {
+                        this.playSettings = { ...this.playSettings, ...JSON.parse(saved) };
+                        console.log('播放设置已加载:', this.playSettings);
+                    }
+                },
+                
+                // 歌单管理相关方法
+                async loadUserPlaylists() {
+                    this.playlistsLoading = true;
+                    try {
+                        const response = await axios.get('/api/playlists');
+                        this.userPlaylists = response.data.items || response.data;
+                        console.log('用户歌单已加载:', this.userPlaylists.length, '个');
+                    } catch (error) {
+                        console.error('加载用户歌单失败:', error);
+                        alert('加载歌单失败，请刷新重试');
+                    } finally {
+                        this.playlistsLoading = false;
+                    }
+                },
+                
+                // 切换歌单展开状态并加载歌曲详情
+                async togglePlaylistExpansion(playlist) {
+                    // 如果点击的是当前展开的歌单，则收起
+                    if (this.currentFavoriteList?.id === playlist.id) {
+                        this.currentFavoriteList = null;
+                        return;
+                    }
+                    
+                    // 设置当前歌单
+                    this.currentFavoriteList = playlist;
+                    
+                    // 如果歌单没有详细的歌曲信息，则加载
+                    if (!playlist.songs || playlist.songs.length === 0) {
+                        this.playlistSongsLoading[playlist.id] = true;
+                        try {
+                            const response = await axios.get(`/api/playlists/${playlist.id}`);
+                            if (response.data.songs) {
+                                // 更新歌单中的歌曲信息
+                                const playlistIndex = this.userPlaylists.findIndex(p => p.id === playlist.id);
+                                if (playlistIndex !== -1) {
+                                    this.userPlaylists[playlistIndex].songs = response.data.songs;
+                                }
+                            }
+                        } catch (error) {
+                            console.error('加载歌单详情失败:', error);
+                            alert('加载歌单详情失败');
+                        } finally {
+                            this.playlistSongsLoading[playlist.id] = false;
+                        }
+                    }
+                },
+                
+                async createPlaylist() {
+                    try {
+                        const response = await axios.post('/api/playlists/create', this.newPlaylistData);
+                        if (response.data.success) {
+                            this.showCreatePlaylistModal = false;
+                            this.resetNewPlaylistData();
+                            await this.loadUserPlaylists();
+                            
+                            // 如果是从添加歌曲流程创建的歌单，重新显示添加对话框
+                            if (this.selectedTracks.length > 0) {
+                                this.selectedPlaylistForAdd = response.data.data.playlist_id;
+                                this.showAddToPlaylistModal = true;
+                            } else {
+                                alert('歌单创建成功！');
+                            }
+                        }
+                    } catch (error) {
+                        alert('创建歌单失败: ' + (error.response?.data?.detail || error.message));
+                    }
+                },
+                
+                async addSelectedToPlaylist() {
+                    if (!this.selectedPlaylistForAdd || this.selectedTracks.length === 0) {
+                        alert('请选择歌单和歌曲');
+                        return;
+                    }
+                    
+                    try {
+                        // 对于搜索结果，我们需要先将歌曲信息传送到后端
+                        const selectedSongData = this.searchResults.filter(track => 
+                            this.selectedTracks.includes(track.id)
+                        );
+                        
+                        // 创建一个特殊的API调用来处理搜索结果的歌曲
+                        const response = await axios.post(`/api/playlists/${this.selectedPlaylistForAdd}/add-search-results`, {
+                            tracks: selectedSongData
+                        });
+                        
+                        if (response.data.success) {
+                            this.showAddToPlaylistModal = false;
+                            this.selectedTracks = [];
+                            this.selectedPlaylistForAdd = null;
+                            await this.loadUserPlaylists(); // 重新加载歌单以更新歌曲数量
+                            alert(response.data.message);
+                        }
+                    } catch (error) {
+                        alert('添加到歌单失败: ' + (error.response?.data?.detail || error.message));
+                    }
+                },
+                
+                resetNewPlaylistData() {
+                    this.newPlaylistData = {
+                        name: '',
+                        description: '',
+                        category: '',
+                        country: '',
+                        language: '',
+                        mood: '',
+                        tags: ''
+                    };
+                },
+                
+                // 批量选择相关方法
+                selectNoneTracks() {
+                    this.selectedTracks = [];
+                },
+                
+                toggleSelectTracks() {
+                    const allIds = this.searchResults.map(track => track.id);
+                    const currentSelected = this.selectedTracks;
+                    this.selectedTracks = allIds.filter(id => !currentSelected.includes(id));
+                },
+                
+                // 获取歌曲所属的歌单
+                getSongPlaylists(songId) {
+                    return this.userPlaylists.filter(playlist => 
+                        playlist.songs && playlist.songs.some(song => song.id === songId)
+                    );
+                },
+                
+                // 显示歌单详情
+                showPlaylistDetail(playlistId) {
+                    // 切换到收藏页面（现在是歌单页面）
+                    this.activeTab = 'favorites';
+                    // 找到对应的歌单并展开
+                    const playlist = this.userPlaylists.find(p => p.id === playlistId);
+                    if (playlist) {
+                        this.currentFavoriteList = playlist;
+                    }
+                },
+                
+                // 打开添加到歌单模态框
+                openAddToPlaylistModal() {
+                    if (this.selectedTracks.length === 0) {
+                        alert('请先选择要添加的歌曲');
+                        return;
+                    }
+                    this.showAddToPlaylistModal = true;
+                },
+                
+                // 删除歌单
+                async deletePlaylist(playlistId) {
+                    if (!playlistId || playlistId === 'undefined') {
+                        console.error('Invalid playlist ID:', playlistId);
+                        alert('歌单ID无效');
+                        return;
+                    }
+                    
+                    if (!confirm('确定要删除这个歌单吗？')) {
+                        return;
+                    }
+                    
+                    try {
+                        const response = await axios.delete(`/api/playlists/${playlistId}`);
+                        if (response.data.success) {
+                            await this.loadUserPlaylists();
+                            this.currentFavoriteList = null;
+                            alert('歌单已删除');
+                        }
+                    } catch (error) {
+                        console.error('Delete playlist error:', error);
+                        alert('删除歌单失败: ' + (error.response?.data?.detail || error.message));
+                    }
+                },
+                
+                // 播放歌单中的所有歌曲
+                playAllInPlaylist(playlist) {
+                    if (!playlist.songs || playlist.songs.length === 0) {
+                        alert('歌单为空');
+                        return;
+                    }
+                    
+                    // 设置播放队列
+                    this.playQueue = [...playlist.songs];
+                    this.currentQueueIndex = 0;
+                    this.shuffleMode = false;
+                    this.playFromQueue(0);
+                    console.log(`开始播放歌单 "${playlist.name}"，共 ${playlist.songs.length} 首歌曲`);
+                },
+                
+                // 随机播放歌单
+                shufflePlayPlaylist(playlist) {
+                    if (!playlist.songs || playlist.songs.length === 0) {
+                        alert('歌单为空');
+                        return;
+                    }
+                    
+                    this.playQueue = this.shuffleArray([...playlist.songs]);
+                    this.currentQueueIndex = 0;
+                    this.shuffleMode = true;
+                    this.playFromQueue(0);
+                    console.log(`开始随机播放歌单 "${playlist.name}"`);
+                },
+                
+                // 下载歌单中的所有歌曲
+                async downloadAllInPlaylist(playlist) {
+                    if (!playlist.songs || playlist.songs.length === 0) {
+                        alert('歌单为空');
+                        return;
+                    }
+                    
+                    this.selectedTracks = playlist.songs.map(song => song.spotify_id);
+                    await this.downloadSelectedTracks();
+                },
+                
+                // 清理空歌单
+                async cleanupEmptyPlaylists() {
+                    if (!confirm('确定要清理所有空歌单吗？')) {
+                        return;
+                    }
+                    
+                    try {
+                        const response = await axios.delete('/api/playlists/cleanup-empty');
+                        if (response.data.success) {
+                            await this.loadUserPlaylists();
+                            alert(response.data.message);
+                        }
+                    } catch (error) {
+                        alert('清理失败: ' + (error.response?.data?.detail || error.message));
+                    }
+                },
+                
+                toggleRepeatMode() {
+                    // 循环切换重复模式: none -> all -> single -> none
+                    const modes = ['none', 'all', 'single'];
+                    const currentIndex = modes.indexOf(this.repeatMode);
+                    const nextIndex = (currentIndex + 1) % modes.length;
+                    this.repeatMode = modes[nextIndex];
+                    console.log(`🔄 重复模式已切换为: ${this.repeatMode}`);
+                },
+                
+                toggleShuffleMode() {
+                    this.shuffleMode = !this.shuffleMode;
+                    console.log(`🔀 随机播放模式: ${this.shuffleMode ? '开启' : '关闭'}`);
+                    
+                    // 如果开启随机模式且有播放队列，重新打乱
+                    if (this.shuffleMode && this.playQueue.length > 0) {
+                        const currentTrack = this.playQueue[this.currentQueueIndex];
+                        this.playQueue = this.shuffleArray(this.playQueue);
+                        // 找到当前播放歌曲的新位置
+                        this.currentQueueIndex = this.playQueue.findIndex(track => track.id === currentTrack.id);
+                    }
+                },
+                
+                getRepeatIcon() {
+                    switch (this.repeatMode) {
+                        case 'none':
+                            return 'fas fa-retweet text-gray-600';
+                        case 'all':
+                            return 'fas fa-retweet text-blue-600';
+                        case 'single':
+                            return 'fas fa-redo text-blue-600';
+                        default:
+                            return 'fas fa-retweet text-gray-600';
+                    }
+                },
+                
+                getRepeatTitle() {
+                    switch (this.repeatMode) {
+                        case 'none':
+                            return '无重复';
+                        case 'all':
+                            return '列表循环';
+                        case 'single':
+                            return '单曲循环';
+                        default:
+                            return '无重复';
+                    }
+                },
+                
+                // 搜索输入防抖处理
+                onSearchInput() {
+                    // 清除之前的定时器
+                    if (this.searchDebounceTimer) {
+                        clearTimeout(this.searchDebounceTimer);
+                    }
+                    
+                    // 设置新的定时器，500ms 延迟
+                    this.searchDebounceTimer = setTimeout(() => {
+                        if (this.searchQuery && this.searchQuery.trim().length > 2) {
+                            this.searchMusic();
+                        }
+                    }, 500);
+                },
+                
+                // 加载搜索历史
+                loadSearchHistory() {
+                    try {
+                        const saved = localStorage.getItem('searchHistory');
+                        if (saved) {
+                            this.searchHistory = JSON.parse(saved);
+                        }
+                    } catch (error) {
+                        console.error('加载搜索历史失败:', error);
+                        this.searchHistory = [];
+                    }
+                },
+                
+                // 添加到搜索历史
+                addToSearchHistory(query) {
+                    if (!query || query.trim() === '') return;
+                    
+                    const trimmedQuery = query.trim();
+                    
+                    // 移除重复的历史记录
+                    const existingIndex = this.searchHistory.findIndex(item => 
+                        item.query.toLowerCase() === trimmedQuery.toLowerCase()
+                    );
+                    
+                    if (existingIndex !== -1) {
+                        this.searchHistory.splice(existingIndex, 1);
+                    }
+                    
+                    // 添加到历史记录顶部
+                    this.searchHistory.unshift({
+                        query: trimmedQuery,
+                        timestamp: Date.now()
+                    });
+                    
+                    // 限制历史记录数量为 20 条
+                    if (this.searchHistory.length > 20) {
+                        this.searchHistory = this.searchHistory.slice(0, 20);
+                    }
+                    
+                    // 保存到 localStorage
+                    localStorage.setItem('searchHistory', JSON.stringify(this.searchHistory));
+                },
+                
+                // 清空搜索历史
+                clearSearchHistory() {
+                    this.searchHistory = [];
+                    localStorage.removeItem('searchHistory');
+                },
+                
+                // 从搜索历史中选择
+                selectFromHistory(query) {
+                    this.searchQuery = query;
+                    this.searchMusic();
+                },
+                
+                // 延迟隐藏搜索历史
+                hideSearchHistoryWithDelay() {
+                    setTimeout(() => {
+                        this.showSearchHistory = false;
+                    }, 150);
+                },
+                
+                // 清理过期的搜索缓存
+                cleanExpiredCache() {
+                    const now = Date.now();
+                    const CACHE_EXPIRE_TIME = 30 * 60 * 1000; // 30分钟过期
+                    
+                    for (const [key, value] of this.searchCache.entries()) {
+                        if (now - value.timestamp > CACHE_EXPIRE_TIME) {
+                            this.searchCache.delete(key);
+                        }
+                    }
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
