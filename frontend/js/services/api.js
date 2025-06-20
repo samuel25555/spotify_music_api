@@ -2,12 +2,13 @@
 
 class ApiService {
     constructor() {
-        // 从环境变量或当前域名获取API基础URL
-        this.baseURL = window.location.origin || 'http://localhost:8000';
+        // 从环境配置获取API基础URL
+        this.baseURL = window.ENV_CONFIG?.API_BASE_URL || window.location.origin;
         this.cache = new Map();
         
         // 配置axios默认设置
-        axios.defaults.timeout = 30000;
+        const timeout = window.ENV_CONFIG?.TIMEOUT?.REQUEST || 30000;
+        axios.defaults.timeout = timeout;
         axios.defaults.headers.common['Content-Type'] = 'application/json';
         
         // 请求拦截器
@@ -147,7 +148,7 @@ class ApiService {
             preview_only: options.previewOnly || false
         };
         
-        return await this.get('/spotify/search', params, true);
+        return await this.get('/api/spotify/search', params, true);
     }
 
     // 多类型搜索
@@ -159,25 +160,25 @@ class ApiService {
             market: 'US'
         };
         
-        return await this.get('/spotify/search-multi', params, true);
+        return await this.get('/api/spotify/search-multi', params, true);
     }
 
     // 搜索歌单
     async searchPlaylists(query, limit = 20) {
         const params = { q: query, limit, market: 'US' };
-        return await this.get('/spotify/search-playlists', params, true);
+        return await this.get('/api/spotify/search-playlists', params, true);
     }
 
     // 解析Spotify URL
     async parseSpotifyUrl(url) {
-        return await this.post('/spotify/parse', { url });
+        return await this.post('/api/spotify/parse', { url });
     }
 
     // =============  音乐收藏库API方法  =============
 
     // 添加到收藏库
     async addToLibrary(spotifyId, options = {}) {
-        return await this.post('/library/add', {
+        return await this.post('/api/library/add', {
             spotify_id: spotifyId,
             category: options.category,
             country: options.country,
@@ -192,17 +193,17 @@ class ApiService {
 
     // 获取收藏库
     async getLibrary(params = {}) {
-        return await this.get('/library', params);
+        return await this.get('/api/library', params);
     }
 
     // 删除收藏
     async deleteFromLibrary(libraryId) {
-        return await this.delete(`/library/${libraryId}`);
+        return await this.delete(`/api/library/${libraryId}`);
     }
 
     // 从收藏库创建歌单
     async createPlaylistFromLibrary(name, songIds, description = '') {
-        return await this.post('/library/create-playlist', {
+        return await this.post('/api/library/create-playlist', {
             name: name,
             song_ids: songIds,
             description: description
@@ -211,19 +212,19 @@ class ApiService {
 
     // 获取收藏库分类
     async getLibraryCategories() {
-        return await this.get('/library/categories');
+        return await this.get('/api/library/categories');
     }
 
     // 获取收藏库统计
     async getLibraryStats() {
-        return await this.get('/library/stats');
+        return await this.get('/api/library/stats');
     }
 
     // =============  下载API方法  =============
 
     // 创建单曲下载
     async downloadSingle(spotifyId, format = 'mp3', quality = 'high') {
-        return await this.post('/download', {
+        return await this.post('/api/download', {
             spotify_id: spotifyId,
             format: format,
             quality: quality
@@ -232,7 +233,7 @@ class ApiService {
 
     // 从收藏库批量下载
     async downloadFromLibrary(libraryIds, format = 'mp3', quality = 'high') {
-        return await this.post('/download/library', {
+        return await this.post('/api/download/library', {
             library_ids: libraryIds,
             format: format,
             quality: quality
@@ -241,7 +242,7 @@ class ApiService {
 
     // 下载整个歌单
     async downloadPlaylist(playlistId, format = 'mp3', quality = 'high') {
-        return await this.post('/download/playlist', {
+        return await this.post('/api/download/playlist', {
             playlist_id: playlistId,
             format: format,
             quality: quality
@@ -250,22 +251,22 @@ class ApiService {
 
     // 获取下载任务
     async getDownloadTasks(params = {}) {
-        return await this.get('/tasks', params);
+        return await this.get('/api/tasks', params);
     }
 
     // 取消下载任务
     async cancelDownloadTask(taskId) {
-        return await this.delete(`/tasks/${taskId}`);
+        return await this.delete(`/api/tasks/${taskId}`);
     }
 
     // 获取下载统计
     async getDownloadStats() {
-        return await this.get('/download/stats');
+        return await this.get('/api/download/stats');
     }
     
     // 清除下载记录
     async clearDownloadTasks(status = null) {
-        const url = status ? `/tasks/clear-all?status=${status}` : '/tasks/clear-all';
+        const url = status ? `/api/tasks/clear-all?status=${status}` : '/api/tasks/clear-all';
         return await this.delete(url);
     }
 
@@ -273,17 +274,17 @@ class ApiService {
 
     // 获取歌单列表
     async getPlaylists(params = {}) {
-        return await this.get('/playlists', params);
+        return await this.get('/api/playlists', params);
     }
 
     // 获取歌单详情
     async getPlaylistDetail(playlistId) {
-        return await this.get(`/playlists/${playlistId}`);
+        return await this.get(`/api/playlists/${playlistId}`);
     }
 
     // 创建歌单
     async createPlaylist(name, description = '', category = null) {
-        return await this.post('/playlists', {
+        return await this.post('/api/playlists', {
             name: name,
             description: description,
             category: category
@@ -292,68 +293,68 @@ class ApiService {
 
     // 更新歌单
     async updatePlaylist(playlistId, data) {
-        return await this.put(`/playlists/${playlistId}`, data);
+        return await this.put(`/api/playlists/${playlistId}`, data);
     }
 
     // 删除歌单
     async deletePlaylist(playlistId) {
-        return await this.delete(`/playlists/${playlistId}`);
+        return await this.delete(`/api/playlists/${playlistId}`);
     }
 
     // 添加歌曲到歌单
     async addSongsToPlaylist(playlistId, songIds) {
-        return await this.post(`/playlists/${playlistId}/songs`, {
+        return await this.post(`/api/playlists/${playlistId}/songs`, {
             song_ids: songIds
         });
     }
 
     // 从歌单移除歌曲
     async removeSongFromPlaylist(playlistId, songId) {
-        return await this.delete(`/playlists/${playlistId}/songs/${songId}`);
+        return await this.delete(`/api/playlists/${playlistId}/songs/${songId}`);
     }
 
     // =============  系统API方法  =============
 
     // 健康检查
     async healthCheck() {
-        return await this.get('/health');
+        return await this.get('/api/health');
     }
 
     // =============  批量任务API方法  =============
 
     // 启动批量导入任务
     async startBatchImport(request) {
-        return await this.post('/batch/import-library', request);
+        return await this.post('/api/batch/import-library', request);
     }
 
     // 启动批量下载任务
     async startBatchDownload(request) {
-        return await this.post('/batch/download-tracks', request);
+        return await this.post('/api/batch/download-tracks', request);
     }
 
     // 获取任务状态
     async getTaskStatus(taskId) {
-        return await this.get(`/batch/task/${taskId}`);
+        return await this.get(`/api/batch/task/${taskId}`);
     }
 
     // 取消任务
     async cancelTask(taskId) {
-        return await this.delete(`/batch/task/${taskId}`);
+        return await this.delete(`/api/batch/task/${taskId}`);
     }
 
     // 获取活动任务列表
     async getActiveTasks() {
-        return await this.get('/batch/active-tasks');
+        return await this.get('/api/batch/active-tasks');
     }
 
     // 获取任务历史记录
     async getTaskHistory(limit = 50) {
-        return await this.get(`/batch/task-history?limit=${limit}`);
+        return await this.get(`/api/batch/task-history?limit=${limit}`);
     }
 
     // 获取工作进程状态
     async getWorkerStatus() {
-        return await this.get('/batch/worker-status');
+        return await this.get('/api/batch/worker-status');
     }
 }
 

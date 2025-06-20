@@ -78,12 +78,24 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 添加CORS中间件
+# 添加CORS中间件 - 改进版本
+def get_allowed_origins():
+    """根据环境获取允许的源"""
+    if settings.DEBUG:
+        return [
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://localhost:3000",  # 开发服务器
+        ]
+    else:
+        # 生产环境应该使用具体域名
+        return [settings.DOMAIN] if settings.DOMAIN != "http://localhost:8000" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境中应该限制具体域名
+    allow_origins=get_allowed_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -128,10 +140,13 @@ if BATCH_TASKS_AVAILABLE:
 else:
     logger.warning("❌ 批量任务路由未启用")
 
-# 静态文件服务
+# 静态文件服务 - 改进版本
 if os.path.exists("frontend"):
+    # 按类型分别挂载静态资源，避免路径冲突
     app.mount("/js", StaticFiles(directory="frontend/js"), name="js")
     app.mount("/css", StaticFiles(directory="frontend/css"), name="css")
+    app.mount("/assets", StaticFiles(directory="frontend/assets"), name="assets")
+    # 提供完整的静态文件访问（用于备用）
     app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 # 下载文件服务
