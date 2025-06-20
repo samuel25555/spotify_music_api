@@ -29,7 +29,7 @@ except Exception as e:
     logger.warning(f"清理旧日志失败: {e}")
 
 # 导入API路由
-from app.api import spotify, download, playlists, library, system
+from app.api import spotify, download, playlists, library, system, auth
 # 现在可以启用批量任务了
 try:
     from app.api import batch_tasks
@@ -127,6 +127,7 @@ async def general_exception_handler(request: Request, exc: Exception):
     )
 
 # 注册API路由
+app.include_router(auth.router, tags=["身份验证"])
 app.include_router(spotify.router, tags=["Spotify"])
 app.include_router(download.router, tags=["下载"])
 app.include_router(playlists.router, tags=["歌单"])
@@ -195,6 +196,17 @@ async def process_manager_page():
         return FileResponse(process_manager_path)
     else:
         return {"error": "进程管理页面未找到"}
+
+# 登录页面
+@app.get("/login.html")
+@app.get("/login")
+async def login_page():
+    """管理员登录页面"""
+    login_path = "frontend/login.html"
+    if os.path.exists(login_path):
+        return FileResponse(login_path)
+    else:
+        return {"error": "登录页面未找到"}
 
 # 健康检查
 @app.get("/health")

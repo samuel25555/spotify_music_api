@@ -8,9 +8,14 @@ import sys
 import shutil
 import argparse
 from pathlib import Path
+from dotenv import load_dotenv
 
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# 加载环境变量
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+load_dotenv(env_path)
 
 from app.core.config import settings
 from app.database.connection import engine, create_tables
@@ -56,7 +61,7 @@ def reset_database(confirm: bool = False):
 
 def clean_downloads(confirm: bool = False):
     """清理下载文件"""
-    download_path = settings.DOWNLOAD_PATH
+    download_path = getattr(settings, 'DOWNLOAD_DIR', 'downloads')
     
     if not os.path.exists(download_path):
         print(f"下载目录不存在: {download_path}")

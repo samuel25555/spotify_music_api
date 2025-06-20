@@ -12,6 +12,7 @@ import os
 
 from app.database.connection import get_db
 from app.database.models import Playlist, PlaylistSong, Song, User, MusicLibrary, DownloadTask
+from app.core.auth import get_current_user, get_current_user_optional
 
 router = APIRouter(prefix="/api/playlists", tags=["Playlists"])
 
@@ -54,9 +55,15 @@ class PlaylistDetailResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# 临时用户ID (实际应用中从认证中获取)
-def get_current_user_id() -> int:
-    return 1
+# 获取当前用户ID（如果已登录）
+def get_current_user_id_optional(current_user: Optional[dict] = Depends(get_current_user_optional)) -> Optional[int]:
+    if current_user:
+        return 1  # 简化实现，实际应该从用户数据中获取
+    return None
+
+# 需要登录的用户ID
+def get_current_user_id_required(current_user: dict = Depends(get_current_user)) -> int:
+    return 1  # 简化实现，实际应该从用户数据中获取
 
 @router.get("/", response_model=dict)
 async def get_playlists(
@@ -64,7 +71,7 @@ async def get_playlists(
     per_page: int = 20,
     category: Optional[str] = None,
     search: Optional[str] = None,
-    user_id: int = Depends(get_current_user_id),
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
     db: Session = Depends(get_db)
 ):
     """
@@ -94,7 +101,12 @@ async def get_playlists(
     ```
     """
     try:
-        query = db.query(Playlist).filter(Playlist.user_id == user_id)
+        # 如果用户已登录，显示用户的歌单；否则显示所有公开歌单
+        if user_id is not None:
+            query = db.query(Playlist).filter(Playlist.user_id == user_id)
+        else:
+            # 未登录用户显示所有歌单（公开访问）
+            query = db.query(Playlist)
         
         if category:
             query = query.filter(Playlist.category == category)
@@ -173,7 +185,7 @@ async def get_playlists(
 @router.get("/{playlist_id}", response_model=dict)
 async def get_playlist_detail(
     playlist_id: int,
-    user_id: int = Depends(get_current_user_id),
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
     db: Session = Depends(get_db)
 ):
     """
@@ -223,13 +235,18 @@ async def get_playlist_detail(
     - 包含完整的歌曲元数据
     """
     try:
-        # 验证歌单所有权
-        playlist = db.query(Playlist).filter(
-            and_(Playlist.id == playlist_id, Playlist.user_id == user_id)
-        ).first()
+        # 获取歌单信息（公开访问或用户自己的歌单）
+        if user_id is not None:
+            # 用户已登录，可以查看自己的歌单
+            playlist = db.query(Playlist).filter(
+                and_(Playlist.id == playlist_id, Playlist.user_id == user_id)
+            ).first()
+        else:
+            # 未登录用户，只能查看公开歌单
+            playlist = db.query(Playlist).filter(Playlist.id == playlist_id).first()
         
         if not playlist:
-            raise HTTPException(status_code=404, detail="歌单未找到")
+            raise HTTPException(status_code=404, detail="歌单未找到或无访问权限")
         
         # 获取歌单中的歌曲
         playlist_songs = db.query(PlaylistSong).join(Song).filter(
@@ -329,7 +346,7 @@ async def get_playlist_detail(
 @router.post("/", response_model=dict)
 async def create_playlist(
     request: PlaylistCreate,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id_required),
     db: Session = Depends(get_db)
 ):
     """创建新歌单"""
@@ -378,7 +395,7 @@ async def create_playlist(
 async def update_playlist(
     playlist_id: int,
     request: PlaylistUpdate,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id_required),
     db: Session = Depends(get_db)
 ):
     """更新歌单信息"""
@@ -430,7 +447,7 @@ async def update_playlist(
 @router.delete("/{playlist_id}")
 async def delete_playlist(
     playlist_id: int,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id_required),
     db: Session = Depends(get_db)
 ):
     """删除歌单"""
@@ -481,7 +498,7 @@ async def delete_playlist(
 async def add_songs_to_playlist(
     playlist_id: int,
     request: AddSongsRequest,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id_required),
     db: Session = Depends(get_db)
 ):
     """添加歌曲到歌单"""
@@ -550,7 +567,7 @@ async def add_songs_to_playlist(
 async def remove_song_from_playlist(
     playlist_id: int,
     song_id: int,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id_required),
     db: Session = Depends(get_db)
 ):
     """从歌单移除歌曲"""
@@ -588,7 +605,7 @@ async def remove_song_from_playlist(
 
 @router.get("/categories/list")
 async def get_playlist_categories(
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_current_user_id_required),
     db: Session = Depends(get_db)
 ):
     """获取用户的歌单分类列表"""
