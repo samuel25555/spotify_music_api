@@ -140,14 +140,27 @@ if BATCH_TASKS_AVAILABLE:
 else:
     logger.warning("❌ 批量任务路由未启用")
 
+# 自定义静态文件类，添加缓存控制
+class NoCacheStaticFiles(StaticFiles):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        # 对于开发环境，禁用缓存
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
 # 静态文件服务 - 改进版本
 if os.path.exists("frontend"):
     # 按类型分别挂载静态资源，避免路径冲突
-    app.mount("/js", StaticFiles(directory="frontend/js"), name="js")
-    app.mount("/css", StaticFiles(directory="frontend/css"), name="css")
-    app.mount("/assets", StaticFiles(directory="frontend/assets"), name="assets")
+    app.mount("/js", NoCacheStaticFiles(directory="frontend/js"), name="js")
+    app.mount("/css", NoCacheStaticFiles(directory="frontend/css"), name="css")
+    app.mount("/assets", NoCacheStaticFiles(directory="frontend/assets"), name="assets")
     # 提供完整的静态文件访问（用于备用）
-    app.mount("/static", StaticFiles(directory="frontend"), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory="frontend"), name="static")
 
 # 下载文件服务
 downloads_dir = "downloads"
