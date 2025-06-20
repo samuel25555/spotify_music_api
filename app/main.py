@@ -15,18 +15,18 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.core.config import settings
 from app.database.connection import create_tables, test_connection
 from app.database.redis_client import redis_client
+from app.utils.logger import get_logger, clean_old_logs
 
-# 配置日志
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(settings.LOG_FILE),
-        logging.StreamHandler()
-    ]
-)
+# 使用改进的日志系统
+logger = get_logger(__name__)
 
-logger = logging.getLogger(__name__)
+# 启动时清理旧日志
+try:
+    log_dir = os.path.dirname(settings.LOG_FILE)
+    if log_dir:
+        clean_old_logs(log_dir, days_to_keep=7)
+except Exception as e:
+    logger.warning(f"清理旧日志失败: {e}")
 
 # 导入API路由
 from app.api import spotify, download, playlists, library, system
