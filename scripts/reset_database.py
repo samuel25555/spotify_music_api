@@ -27,6 +27,12 @@ def reset_database(confirm: bool = False):
     
     print("\n开始重置数据库...")
     
+    # 检查数据库配置
+    if not settings.DATABASE_URL:
+        print("❌ 错误：DATABASE_URL 未配置")
+        print("请检查 .env 文件是否存在并包含 DATABASE_URL 配置")
+        return
+    
     # 1. 删除数据库文件（如果是SQLite）
     if settings.DATABASE_URL.startswith('sqlite'):
         db_file = settings.DATABASE_URL.replace('sqlite:///', '')
