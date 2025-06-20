@@ -361,4 +361,9 @@ class ApiService {
 // 创建全局API实例
 const api = new ApiService();
 
-// API实例已创建，无需额外导出方法
+// 确保API实例在全局作用域中可用
+window.api = api;
+window.ApiService = ApiService;
+
+// API实例已创建并暴露到全局作用域
+console.log('🔌 API服务已加载，实例:', api);

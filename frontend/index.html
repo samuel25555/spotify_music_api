@@ -5,20 +5,40 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Music Downloader - 音乐下载器</title>
     <!-- 配置文件 -->
-    <script src="/js/config/env.js?v=20250620"></script>
+    <script src="/js/config/env.js?v=20250620-2"></script>
     <!-- 外部依赖 -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <!-- 工具和服务 -->
-    <script src="/js/utils/constants.js?v=20250620"></script>
-    <script src="/js/utils/helpers.js?v=20250620"></script>
-    <script src="/js/services/api.js?v=20250620"></script>
+    <script src="/js/utils/constants.js?v=20250620-2"></script>
+    <script src="/js/utils/helpers.js?v=20250620-2"></script>
+    <script src="/js/services/api.js?v=20250620-2"></script>
     <!-- 主应用初始化 -->
-    <script src="/js/main.js?v=20250620"></script>
+    <script src="/js/main.js?v=20250620-2"></script>
+    <!-- 确保API实例可用 -->
+    <script>
+        // 等待所有脚本加载完成后检查API实例
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🔍 检查API实例状态...');
+            
+            if (typeof window.api === 'undefined') {
+                console.error('❌ API实例未正确创建，尝试手动创建...');
+                if (typeof window.ApiService !== 'undefined') {
+                    window.api = new window.ApiService();
+                    console.log('✅ API实例已手动创建');
+                } else {
+                    console.error('❌ ApiService类未找到，请检查api.js文件加载');
+                    alert('应用初始化失败：API服务未加载。请刷新页面重试。');
+                }
+            } else {
+                console.log('✅ API实例已正确加载');
+            }
+        });
+    </script>
     <link href="https://unpkg.com/tailwindcss@^2/dist/tailwind.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <!-- 自定义样式 -->
-    <link rel="stylesheet" href="/css/main.css?v=20250620">
+    <link rel="stylesheet" href="/css/main.css?v=20250620-2">
     <style>
         /* 自定义样式 */
         .fade-enter-active, .fade-leave-active {
@@ -265,6 +285,15 @@
         },
         
         mounted() {
+            // 确保API实例可用
+            if (typeof window.api === 'undefined') {
+                this.showError('API服务未正确加载，请刷新页面重试');
+                console.error('❌ API实例在Vue mounted中未找到');
+                return;
+            }
+            
+            console.log('✅ Vue应用已挂载，API实例可用');
+            
             // 检查用户认证状态
             this.checkAuthStatus();
             
@@ -290,7 +319,7 @@
             // 加载歌单列表
             async loadPlaylists() {
                 try {
-                    const response = await api.getPlaylists();
+                    const response = await window.api.getPlaylists();
                     this.playlists = response.data?.playlists || [];
                 } catch (error) {
                     this.showError('加载歌单失败: ' + error.message);
@@ -300,7 +329,7 @@
             // 加载下载任务
             async loadDownloadTasks() {
                 try {
-                    const response = await api.getDownloadTasks();
+                    const response = await window.api.getDownloadTasks();
                     this.downloadTasks = response.tasks || [];
                     
                     // 计算待处理任务数
@@ -315,7 +344,7 @@
             // 静默更新下载任务（不闪烁）
             async updateDownloadTasksSilent() {
                 try {
-                    const response = await api.getDownloadTasks();
+                    const response = await window.api.getDownloadTasks();
                     const newTasks = response.tasks || [];
                     
                     // 智能更新：只更新变化的任务
@@ -346,7 +375,7 @@
             // 加载收藏库统计
             async loadLibraryStats() {
                 try {
-                    const response = await api.getLibraryStats();
+                    const response = await window.api.getLibraryStats();
                     this.libraryStats = response.data || response;
                 } catch (error) {
                     this.showError('加载收藏库统计失败: ' + error.message);
@@ -1372,7 +1401,7 @@
                 try {
                     this.$root.showSuccess('检测到Spotify链接，正在解析...');
                     
-                    const parseResponse = await api.parseSpotifyUrl(this.searchQuery.trim());
+                    const parseResponse = await window.api.parseSpotifyUrl(this.searchQuery.trim());
                     
                     if (parseResponse.type === 'playlist') {
                         // 切换到歌单模式并显示解析结果
@@ -1427,11 +1456,11 @@
                     
                     if (currentType === 'track') {
                         // 搜索歌曲
-                        const response = await api.searchMusic(this.searchQuery, this.searchOptions);
+                        const response = await window.api.searchMusic(this.searchQuery, this.searchOptions);
                         this.allSearchResults.tracks = response.data?.tracks || response.tracks || [];
                     } else {
                         // 搜索其他类型
-                        const response = await api.searchMultiType(this.searchQuery, [currentType], this.searchOptions.limit);
+                        const response = await window.api.searchMultiType(this.searchQuery, [currentType], this.searchOptions.limit);
                         
                         // 正确处理响应数据
                         if (currentType === 'playlist') {
@@ -1479,7 +1508,7 @@
             
             async addToLibrary(track) {
                 try {
-                    await api.addToLibrary(track.id, {
+                    await window.api.addToLibrary(track.id, {
                         category: '搜索收藏',
                         country: track.country,
                         language: track.language,
@@ -1495,7 +1524,7 @@
             
             async downloadTrack(track) {
                 try {
-                    const response = await api.downloadSingle(track.id);
+                    const response = await window.api.downloadSingle(track.id);
                     this.$emit('download-started', response);
                 } catch (error) {
                     this.$root.showError('下载失败: ' + error.message);
@@ -1534,7 +1563,7 @@
                     } else {
                         // 解析Spotify歌单获取歌曲列表
                         const playlistUrl = playlist.spotify_url || `https://open.spotify.com/playlist/${playlist.id}`;
-                        const parseResponse = await api.parseSpotifyUrl(playlistUrl);
+                        const parseResponse = await window.api.parseSpotifyUrl(playlistUrl);
                         
                         if (!parseResponse.tracks || parseResponse.tracks.length === 0) {
                             this.$root.showError('歌单中没有可导入的歌曲');
@@ -1549,7 +1578,7 @@
                     
                     for (const track of tracks) {
                         try {
-                            await api.addToLibrary(track.id, {
+                            await window.api.addToLibrary(track.id, {
                                 category: settings.category,
                                 tags: settings.tags,
                                 notes: settings.notes,
@@ -1575,7 +1604,7 @@
             async importAlbum(album) {
                 try {
                     // 简化导入：直接添加到收藏库
-                    await api.addToLibrary(album.id, {
+                    await window.api.addToLibrary(album.id, {
                         category: `专辑`,
                         tags: `专辑,${album.artist || ''},${album.total_tracks || 0}首`,
                         notes: `来自Spotify专辑: ${album.name} (${album.release_date?.slice(0,4) || ''})`
@@ -1653,7 +1682,7 @@
                     };
                     
                     // 调用后端API启动批量任务
-                    const response = await api.startBatchImport({
+                    const response = await window.api.startBatchImport({
                         items: selectedItemIds,
                         search_type: this.searchOptions.searchType,
                         settings: convertedSettings
@@ -1702,7 +1731,7 @@
                     };
                     
                     // 调用后端API启动批量任务
-                    const response = await api.startBatchImport({
+                    const response = await window.api.startBatchImport({
                         items: selectedItemIds,
                         search_type: this.searchOptions.searchType,
                         settings: convertedSettings
@@ -1752,7 +1781,7 @@
             async pollTaskStatus(celeryTaskId) {
                 const pollInterval = setInterval(async () => {
                     try {
-                        const status = await api.getTaskStatus(celeryTaskId);
+                        const status = await window.api.getTaskStatus(celeryTaskId);
                         const task = this.$root.batchTasks.find(t => t.celeryTaskId === celeryTaskId);
                         
                         if (task) {
@@ -2265,7 +2294,7 @@
                         ...this.filters
                     };
                     
-                    const response = await api.getLibrary(params);
+                    const response = await window.api.getLibrary(params);
                     const data = response.data || response;
                     this.libraryItems = data.entries || [];
                     this.totalItems = data.total || 0;
@@ -2276,7 +2305,7 @@
             
             async loadStats() {
                 try {
-                    const response = await api.getLibraryStats();
+                    const response = await window.api.getLibraryStats();
                     this.stats = response.data || response;
                 } catch (error) {
                     console.error('加载统计失败:', error);
@@ -2285,7 +2314,7 @@
             
             async downloadItem(item) {
                 try {
-                    const response = await api.downloadFromLibrary([item.id]);
+                    const response = await window.api.downloadFromLibrary([item.id]);
                     this.$emit('download-started', response);
                 } catch (error) {
                     this.$root.showError('下载失败: ' + error.message);
@@ -2296,7 +2325,7 @@
                 if (this.selectedItems.length === 0) return;
                 
                 try {
-                    const response = await api.downloadFromLibrary(this.selectedItems);
+                    const response = await window.api.downloadFromLibrary(this.selectedItems);
                     this.$emit('download-started', response);
                     this.clearSelection();
                 } catch (error) {
@@ -2336,7 +2365,7 @@
                         ...this.filters
                     };
                     
-                    const response = await api.getLibrary(params);
+                    const response = await window.api.getLibrary(params);
                     const allEntries = response.data?.entries || [];
                     
                     // 存储所有歌曲数据，用于后续处理
@@ -2360,7 +2389,7 @@
                 
                 try {
                     // 加载用户的歌单列表
-                    const response = await api.getPlaylists();
+                    const response = await window.api.getPlaylists();
                     this.availablePlaylists = response.data?.playlists || [];
                     this.showPlaylistModal = true;
                 } catch (error) {
@@ -2379,7 +2408,7 @@
             // 加载可用歌单列表
             async loadAvailablePlaylists() {
                 try {
-                    const response = await api.getPlaylists();
+                    const response = await window.api.getPlaylists();
                     this.availablePlaylists = response.data?.playlists || [];
                 } catch (error) {
                     console.error('加载歌单列表失败:', error);
@@ -2396,7 +2425,7 @@
                     
                     // 如果是创建新歌单
                     if (!playlistId && this.newPlaylistName) {
-                        const createResponse = await api.createPlaylist(
+                        const createResponse = await window.api.createPlaylist(
                             this.newPlaylistName, 
                             this.newPlaylistDescription
                         );
@@ -2426,7 +2455,7 @@
                         }
                         
                         // 添加歌曲到歌单
-                        await api.addSongsToPlaylist(playlistId, songIds);
+                        await window.api.addSongsToPlaylist(playlistId, songIds);
                         
                         this.$root.showSuccess(`成功添加 ${songIds.length} 首歌曲到歌单 "${playlistName}"`);
                         
@@ -2454,7 +2483,7 @@
                 if (!confirm('确定要从收藏库中删除吗？')) return;
                 
                 try {
-                    await api.deleteFromLibrary(id);
+                    await window.api.deleteFromLibrary(id);
                     this.$root.showSuccess('已从收藏库删除');
                     this.loadLibrary();
                     this.loadStats();
@@ -2767,7 +2796,7 @@
             async viewPlaylist(playlist) {
                 try {
                     // 获取歌单详情
-                    const response = await api.getPlaylistDetail(playlist.id);
+                    const response = await window.api.getPlaylistDetail(playlist.id);
                     this.selectedPlaylist = response.data;
                 } catch (error) {
                     this.$root.showError('加载歌单详情失败: ' + error.message);
@@ -2779,7 +2808,7 @@
                 if (!this.$root.requireAuth('下载歌单')) return;
                 
                 try {
-                    const response = await api.downloadPlaylist(playlist.id);
+                    const response = await window.api.downloadPlaylist(playlist.id);
                     this.$emit('download-started', response);
                     this.$root.showSuccess(`歌单 "${playlist.name}" 下载已启动`);
                     
@@ -2946,7 +2975,7 @@
             // 下载单首歌曲
             async downloadSong(song) {
                 try {
-                    const response = await api.downloadSingle(song.spotify_id);
+                    const response = await window.api.downloadSingle(song.spotify_id);
                     this.$emit('download-started', response);
                 } catch (error) {
                     this.$root.showError('下载失败: ' + error.message);
@@ -2990,7 +3019,7 @@
                     
                     if (libraryIds.length > 0) {
                         // 使用收藏库批量下载API
-                        const response = await api.downloadFromLibrary(libraryIds);
+                        const response = await window.api.downloadFromLibrary(libraryIds);
                         this.$emit('download-started', response);
                         this.$root.showSuccess(`已开始批量下载 ${libraryIds.length} 首歌曲`);
                         
@@ -3033,7 +3062,7 @@
                 
                 try {
                     for (const songId of this.selectedSongs) {
-                        await api.removeSongFromPlaylist(this.selectedPlaylist.id, songId);
+                        await window.api.removeSongFromPlaylist(this.selectedPlaylist.id, songId);
                     }
                     
                     this.$root.showSuccess(`已移除 ${this.selectedSongs.length} 首歌曲`);
@@ -3050,7 +3079,7 @@
                 if (!confirm(`确定要从歌单中移除 "${song.title}" 吗？`)) return;
                 
                 try {
-                    await api.removeSongFromPlaylist(this.selectedPlaylist.id, song.id);
+                    await window.api.removeSongFromPlaylist(this.selectedPlaylist.id, song.id);
                     this.$root.showSuccess('歌曲已从歌单移除');
                     // 重新加载歌单详情
                     await this.viewPlaylist(this.selectedPlaylist);
@@ -3151,7 +3180,7 @@
             
             async cancelTask(taskId) {
                 try {
-                    await api.cancelDownloadTask(taskId);
+                    await window.api.cancelDownloadTask(taskId);
                     this.$emit('task-updated');
                 } catch (error) {
                     this.$root.showError('取消失败: ' + error.message);
@@ -3168,7 +3197,7 @@
                     
                     if (!confirm(`确定要清除所有${statusText[status]}的任务记录吗？`)) return;
                     
-                    const response = await api.clearDownloadTasks(status);
+                    const response = await window.api.clearDownloadTasks(status);
                     this.$root.showSuccess(response.message);
                     this.$emit('task-updated');
                 } catch (error) {
@@ -3180,7 +3209,7 @@
                 if (!confirm('确定要清除所有下载任务记录吗？此操作不可恢复！')) return;
                 
                 try {
-                    const response = await api.clearDownloadTasks();
+                    const response = await window.api.clearDownloadTasks();
                     this.$root.showSuccess(response.message);
                     this.$emit('task-updated');
                 } catch (error) {
