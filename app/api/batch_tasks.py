@@ -7,7 +7,15 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from celery.result import AsyncResult
 from app.celery_app import app as celery_app
-from app.tasks.batch_tasks import batch_import_to_library, batch_download_tracks
+# 尝试导入批量任务，如果失败则禁用相关功能
+try:
+    from app.tasks.batch_tasks import batch_import_to_library, batch_download_tracks
+    BATCH_TASKS_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ 批量任务模块导入失败: {e}")
+    BATCH_TASKS_AVAILABLE = False
+    batch_import_to_library = None
+    batch_download_tracks = None
 
 router = APIRouter(prefix="/api/batch", tags=["Batch Tasks"])
 
@@ -35,6 +43,9 @@ class TaskStatusResponse(BaseModel):
 @router.post("/import-library", response_model=TaskResponse)
 async def start_batch_import(request: BatchImportRequest):
     """启动批量导入到收藏库的任务"""
+    if not BATCH_TASKS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="批量任务功能不可用，请启动Celery Worker")
+        
     try:
         # 验证搜索类型
         if request.search_type not in ['track', 'playlist', 'album']:
@@ -59,6 +70,9 @@ async def start_batch_import(request: BatchImportRequest):
 @router.post("/download-tracks", response_model=TaskResponse)
 async def start_batch_download(request: BatchDownloadRequest):
     """启动批量下载任务"""
+    if not BATCH_TASKS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="批量任务功能不可用，请启动Celery Worker")
+        
     try:
         # 启动异步任务
         task = batch_download_tracks.delay(

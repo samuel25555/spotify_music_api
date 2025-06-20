@@ -521,3 +521,103 @@ def batch_add_multiple_albums(self, album_ids, settings, user_id=1):
             meta={'error': str(e)}
         )
         raise
+
+@app.task(bind=True)
+def batch_download_tracks(self, track_ids, download_settings=None):
+    """
+    批量下载歌曲的异步任务
+    
+    Args:
+        track_ids: 要下载的歌曲ID列表（数据库Song表ID）
+        download_settings: 下载设置
+    """
+    try:
+        from app.services.download_service import DownloadService
+        
+        total = len(track_ids)
+        completed = 0
+        failed = 0
+        failed_items = []
+        
+        self.update_state(
+            state='PROGRESS',
+            meta={
+                'progress': 0,
+                'status': f'开始批量下载 {total} 首歌曲',
+                'completed': 0,
+                'total': total,
+                'failed': 0
+            }
+        )
+        
+        download_service = DownloadService()
+        
+        with get_db_session() as db:
+            for i, track_id in enumerate(track_ids):
+                try:
+                    # 获取歌曲信息
+                    song = db.query(Song).filter(Song.id == track_id).first()
+                    if not song:
+                        raise Exception(f"歌曲不存在: {track_id}")
+                    
+                    # 如果已经下载，跳过
+                    if song.is_downloaded and song.file_path:
+                        logger.info(f"歌曲 {song.title} 已下载，跳过")
+                        completed += 1
+                        continue
+                    
+                    # 下载歌曲
+                    result = download_service.download_song(song, download_settings or {})
+                    
+                    if result.get('success'):
+                        completed += 1
+                        logger.info(f"歌曲 {song.title} 下载成功")
+                    else:
+                        failed += 1
+                        failed_items.append({
+                            'track_id': track_id,
+                            'title': song.title,
+                            'error': result.get('message', '下载失败')
+                        })
+                        logger.error(f"歌曲 {song.title} 下载失败: {result.get('message')}")
+                    
+                    # 更新进度
+                    progress = int((i + 1) / total * 100)
+                    self.update_state(
+                        state='PROGRESS',
+                        meta={
+                            'progress': progress,
+                            'status': f'已处理 {i + 1}/{total} 首歌曲，成功 {completed}，失败 {failed}',
+                            'completed': completed,
+                            'total': total,
+                            'failed': failed
+                        }
+                    )
+                    
+                except Exception as e:
+                    failed += 1
+                    failed_items.append({
+                        'track_id': track_id,
+                        'error': str(e)
+                    })
+                    logger.error(f"处理歌曲 {track_id} 失败: {e}")
+                
+                # 避免处理过快
+                time.sleep(0.2)
+        
+        return {
+            'completed': completed,
+            'failed': failed,
+            'total': total,
+            'status': 'completed',
+            'failed_items': failed_items,
+            'message': f'批量下载完成：成功 {completed} 首，失败 {failed} 首'
+        }
+        
+    except Exception as e:
+        logger.error(f"批量下载任务失败: {e}")
+        self.update_state(
+            state='FAILURE',
+            meta={'error': str(e)}
+        )
+        raise

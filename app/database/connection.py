@@ -31,6 +31,11 @@ engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
     pool_recycle=300,
+    connect_args={
+        "connect_timeout": 10,  # 连接超时10秒
+        "read_timeout": 30,     # 读取超时30秒
+        "write_timeout": 30,    # 写入超时30秒
+    },
     echo=settings.DEBUG,  # 在开发模式下显示SQL日志
 )
 

@@ -2,7 +2,8 @@
 
 class ApiService {
     constructor() {
-        this.baseURL = 'http://localhost:8000/api';
+        // 从环境变量或当前域名获取API基础URL
+        this.baseURL = window.location.origin || 'http://localhost:8000';
         this.cache = new Map();
         
         // 配置axios默认设置
