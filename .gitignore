@@ -1,7 +1,6 @@
-# 环境配置文件
+# 环境配置文件 (生产环境需要.env.production作为模板)
 .env
 .env.local
-.env.production
 
 # 日志文件
 logs/
@@ -46,3 +45,27 @@ Thumbs.db
 # 备份文件
 *.bak
 *.backup
+
+# 备份目录 (开发过程中的备份)
+backup/
+
+# 开发数据目录
+data/
+
+# 进程ID文件
+pids/
+
+# 调试和测试文件
+debug_*.py
+test_*.py
+test_*.html
+
+# Python缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 分发/打包
+dist/
+build/
+*.egg-info/

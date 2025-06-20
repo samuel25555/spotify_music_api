@@ -1,37 +1,84 @@
-from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
-from app.database import create_tables
-from app.api.download import router as download_router
-from app.api.songs import router as songs_router
-from app.api.spotify import router as spotify_router
-from app.api.playlist_manager import router as playlist_router
-import uvicorn
+"""
+Music Downloader API - 主应用入口
+现代化架构版本
+"""
 import os
+import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.core.config import settings
+from app.database.connection import create_tables, test_connection
+from app.database.redis_client import redis_client
+
+# 配置日志
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(settings.LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+# 导入API路由
+from app.api import spotify, download, playlists, library, system
+# 现在可以启用批量任务了
+try:
+    from app.api import batch_tasks
+    BATCH_TASKS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"批量任务模块导入失败: {e}")
+    BATCH_TASKS_AVAILABLE = False
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # 启动时执行
+    logger.info("🚀 启动 Music Downloader API...")
+    
+    # 测试数据库连接
+    logger.info("📊 测试数据库连接...")
+    if test_connection():
+        logger.info("✅ 数据库连接成功")
+        # 创建数据库表
+        create_tables()
+        logger.info("📋 数据库表已创建/更新")
+    else:
+        logger.error("❌ 数据库连接失败")
+    
+    # 连接Redis
+    logger.info("🔴 连接Redis...")
+    if await redis_client.connect():
+        logger.info("✅ Redis连接成功")
+    else:
+        logger.error("❌ Redis连接失败")
+    
+    logger.info("🎵 Music Downloader API 启动完成")
+    
+    yield
+    
+    # 关闭时执行
+    logger.info("🛑 关闭 Music Downloader API...")
+    await redis_client.close()
+    logger.info("👋 再见！")
 
 # 创建FastAPI应用
 app = FastAPI(
-    title="Music Downloader API",
-    description="专为Laravel后端设计的音乐下载微服务",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description="现代化的音乐下载和管理API",
+    lifespan=lifespan
 )
 
-# 配置JSON响应不过滤null值
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
-
-class CustomJSONResponse(JSONResponse):
-    def render(self, content) -> bytes:
-        return JSONResponse.render(self, jsonable_encoder(content, exclude_none=False))
-
-# 设置默认响应类
-app.default_response_class = CustomJSONResponse
-
-# CORS中间件
+# 添加CORS中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # 生产环境中应该限制具体域名
@@ -40,176 +87,132 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由
-app.include_router(download_router)
-app.include_router(songs_router)
-app.include_router(spotify_router)
-app.include_router(playlist_router)
+# 全局异常处理
+from fastapi.responses import JSONResponse
 
-# 静态文件和模板
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    logger.error(f"HTTP异常: {exc.status_code} - {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail, "status_code": exc.status_code}
+    )
 
-# 配置 Jinja2 使用不同的分隔符以避免与 Vue.js 冲突
-templates.env.variable_start_string = '[['
-templates.env.variable_end_string = ']]'
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"请求验证错误: {exc}")
+    return JSONResponse(
+        status_code=422,
+        content={"error": "请求参数验证失败", "details": exc.errors()}
+    )
 
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时创建数据库表"""
-    print("🚀 正在启动 Music Downloader API...")
-    create_tables()
-    print("✅ Music Downloader API 启动完成")
-    print("🌐 Web Interface: http://0.0.0.0:8000")
-    print("📖 API Documentation: http://0.0.0.0:8000/docs")
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(f"未处理的异常: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "服务器内部错误", "message": str(exc)}
+    )
 
-@app.get("/", response_class=HTMLResponse)
-async def web_interface(request: Request):
-    """Web管理界面"""
-    return templates.TemplateResponse("index.html", {"request": request})
+# 注册API路由
+app.include_router(spotify.router, tags=["Spotify"])
+app.include_router(download.router, tags=["下载"])
+app.include_router(playlists.router, tags=["歌单"])
+app.include_router(library.router, tags=["音乐库"])
+app.include_router(system.router, tags=["系统"])
 
+# 条件注册批量任务路由
+if BATCH_TASKS_AVAILABLE:
+    app.include_router(batch_tasks.router, tags=["批量任务"])
+    logger.info("✅ 批量任务路由已启用")
+else:
+    logger.warning("❌ 批量任务路由未启用")
+
+# 静态文件服务
+if os.path.exists("frontend"):
+    app.mount("/js", StaticFiles(directory="frontend/js"), name="js")
+    app.mount("/css", StaticFiles(directory="frontend/css"), name="css")
+    app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+# 下载文件服务
+downloads_dir = "downloads"
+if os.path.exists(downloads_dir):
+    app.mount("/downloads", StaticFiles(directory=downloads_dir), name="downloads")
+else:
+    # 如果下载目录不存在，创建它
+    os.makedirs(downloads_dir, exist_ok=True)
+    app.mount("/downloads", StaticFiles(directory=downloads_dir), name="downloads")
+
+# 主页路由
+@app.get("/")
+async def read_root():
+    """返回前端页面"""
+    frontend_path = "frontend/index.html"
+    if os.path.exists(frontend_path):
+        return FileResponse(frontend_path)
+    else:
+        return {
+            "message": "🎵 Music Downloader API",
+            "version": settings.APP_VERSION,
+            "docs": "/docs",
+            "frontend": "前端文件未找到，请检查 frontend/ 目录"
+        }
+
+# 进程管理页面
+@app.get("/process-manager")
+async def process_manager_page():
+    """进程管理页面"""
+    process_manager_path = "frontend/process-manager.html"
+    if os.path.exists(process_manager_path):
+        return FileResponse(process_manager_path)
+    else:
+        return {"error": "进程管理页面未找到"}
+
+# 健康检查
 @app.get("/health")
 async def health_check():
     """健康检查接口"""
     return {
         "status": "healthy",
-        "service": "Music Downloader API",
-        "version": "1.0.0"
+        "version": settings.APP_VERSION,
+        "database": "connected" if test_connection() else "disconnected",
+        "redis": "connected" if await redis_client.get_client() else "disconnected"
     }
 
-@app.get("/api/system-info")
-async def get_system_info():
-    """获取系统信息"""
-    import subprocess
-    
-    # 检测 FFmpeg 是否可用
-    ffmpeg_command = os.getenv("FFMPEG_COMMAND", "ffmpeg")
-    has_ffmpeg = False
-    
-    try:
-        if ffmpeg_command.startswith("uv run"):
-            # 对于 uv run ffmpeg，需要在项目目录执行
-            result = subprocess.run(
-                ffmpeg_command.split() + ['-version'], 
-                capture_output=True, 
-                timeout=5,
-                cwd=os.getcwd()
-            )
-        else:
-            result = subprocess.run(
-                [ffmpeg_command, '-version'], 
-                capture_output=True, 
-                timeout=5
-            )
-        has_ffmpeg = result.returncode == 0
-    except:
-        # 如果配置的命令失败，检查系统 ffmpeg
-        try:
-            import shutil
-            has_ffmpeg = shutil.which('ffmpeg') is not None
-        except:
-            has_ffmpeg = False
-    
-    if has_ffmpeg:
-        supported_formats = ["mp3", "webm", "m4a", "flac"]
-        preferred_format = "mp3"
-        format_note = f"支持 MP3 转换 (使用: {ffmpeg_command})"
-    else:
-        supported_formats = ["webm", "m4a", "opus", "aac"]
-        preferred_format = "webm"
-        format_note = "下载原始音频格式（推荐安装 FFmpeg 支持 MP3）"
-    
+# API信息
+@app.get("/api/info")
+async def api_info():
+    """API信息接口"""
     return {
-        "has_ffmpeg": has_ffmpeg,
-        "supported_formats": supported_formats,
-        "preferred_format": preferred_format,
-        "format_note": format_note,
-        "download_path": os.getenv("DOWNLOAD_PATH", "./downloads"),
-        "ffmpeg_command": ffmpeg_command if has_ffmpeg else None
-    }
-
-# Laravel调用示例接口文档
-@app.get("/laravel-examples")
-async def laravel_examples():
-    """Laravel调用示例"""
-    return {
-        "examples": {
-            "download_song": {
-                "method": "POST",
-                "url": "/api/download",
-                "body": {
-                    "url": "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh",
-                    "format": "mp3",
-                    "quality": "320k",
-                    "callback_url": "https://your-laravel-app.com/api/download-complete"
-                }
-            },
-            "download_playlist": {
-                "method": "POST", 
-                "url": "/api/download-playlist",
-                "body": {
-                    "url": "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M",
-                    "format": "mp3",
-                    "quality": "320k",
-                    "callback_url": "https://your-laravel-app.com/api/playlist-complete"
-                }
-            },
-            "check_status": {
-                "method": "GET",
-                "url": "/api/status/{task_id}"
-            },
-            "get_songs": {
-                "method": "GET",
-                "url": "/api/songs?page=1&per_page=50&status=completed"
-            },
-            "get_stats": {
-                "method": "GET",
-                "url": "/api/stats"
-            }
-        },
-        "php_example": '''
-        // Laravel Controller Example
-        use Illuminate\\Support\\Facades\\Http;
-        
-        class MusicController extends Controller 
-        {
-            private $apiBase = 'http://localhost:8000/api';
-            
-            public function downloadSong($spotifyUrl) 
-            {
-                $response = Http::post($this->apiBase . '/download', [
-                    'url' => $spotifyUrl,
-                    'format' => 'mp3',
-                    'quality' => '320k',
-                    'callback_url' => route('download.complete')
-                ]);
-                
-                return $response->json();
-            }
-            
-            public function checkStatus($taskId) 
-            {
-                $response = Http::get($this->apiBase . "/status/{$taskId}");
-                return $response->json();
-            }
-            
-            public function getSongs($page = 1) 
-            {
-                $response = Http::get($this->apiBase . '/songs', [
-                    'page' => $page,
-                    'per_page' => 50
-                ]);
-                
-                return $response->json();
-            }
+        "name": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "description": "现代化的音乐下载和管理API",
+        "features": [
+            "🔍 智能多类型搜索",
+            "🎵 Spotify API集成", 
+            "📥 多格式音频下载",
+            "🎼 歌单管理",
+            "⚡ Redis缓存加速",
+            "🗄️ MySQL数据持久化"
+        ],
+        "endpoints": {
+            "docs": "/docs",
+            "health": "/health",
+            "spotify_search": "/api/spotify/search",
+            "multi_search": "/api/spotify/search-multi",
+            "download": "/api/download",
+            "playlists": "/api/playlists"
         }
-        '''
     }
 
 if __name__ == "__main__":
+    import uvicorn
+    
+    logger.info("🚀 直接启动模式")
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=settings.DEBUG,
+        log_level=settings.LOG_LEVEL.lower()
     )

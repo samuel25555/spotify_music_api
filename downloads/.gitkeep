@@ -1,0 +1,2 @@
+# 保持downloads目录结构
+# 此文件确保downloads目录被git跟踪，但内部文件不会被同步

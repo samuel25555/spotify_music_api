@@ -1,5 +1,4 @@
-from .song import Song
-from .playlist import Playlist, playlist_songs
-from .download_task import DownloadTask
+# 统一使用 database.models 中的模型定义
+from app.database.models import Song, Playlist, DownloadTask, PlaylistSong, MusicLibrary
 
-__all__ = ["Song", "Playlist", "DownloadTask", "playlist_songs"]
+__all__ = ["Song", "Playlist", "DownloadTask", "PlaylistSong", "MusicLibrary"]

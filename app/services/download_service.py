@@ -259,14 +259,19 @@ class DownloadService:
         import uuid
         import hashlib
         
-        if song_info:
-            # 使用歌曲信息生成稳定的哈希
+        if song_info and song_info.get('spotify_id'):
+            # 与API保持一致的hash生成方式
+            hash_source = f"{song_info.get('spotify_id', '')}_{song_info.get('name', '')}_{song_info.get('artist', '')}"
+            file_hash = hashlib.md5(hash_source.encode('utf-8')).hexdigest()
+            filename = file_hash
+        elif song_info:
+            # 没有spotify_id时的备用方式
             song_data = f"{song_info.get('name', '')}-{song_info.get('artist', '')}"
             hash_obj = hashlib.md5(song_data.encode('utf-8'))
-            filename = hash_obj.hexdigest()[:12]  # 取前12位
+            filename = hash_obj.hexdigest()
         else:
             # 使用UUID生成唯一文件名
-            filename = str(uuid.uuid4())[:8]
+            filename = str(uuid.uuid4()).replace('-', '')
         
         return f"{filename}.{file_extension}"
     

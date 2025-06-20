@@ -1,515 +1,510 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+"""
+下载管理 API
+支持单曲下载、歌单批量下载、防重复下载等功能
+"""
+from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
-from app.database import get_db
-from app.models import Song, Playlist, DownloadTask
-from app.services import SpotifyService, DownloadService
-from app.services.language_detector import language_detector
-from app.api.schemas import (
-    DownloadRequest, PlaylistDownloadRequest, DownloadTaskResponse,
-    DownloadStatusResponse, ApiResponse, SearchRequest, YouTubeSearchResult
-)
+from sqlalchemy import and_, or_
 from typing import List, Optional
-import asyncio
-from datetime import datetime
+from pydantic import BaseModel
+import uuid
 import os
+from datetime import datetime
 
-router = APIRouter(prefix="/api", tags=["download"])
+from app.database.connection import get_db
+from app.database.models import DownloadTask, Song, MusicLibrary, Playlist, PlaylistSong
 
-# 初始化服务
-spotify_service = SpotifyService()
-download_service = DownloadService()
+router = APIRouter(prefix="/api", tags=["Download"])
 
-async def process_download_task_async(task_id: str):
-    """异步后台处理下载任务 - 创建独立的数据库会话"""
-    from app.database import SessionLocal
-    db = SessionLocal()
-    try:
-        print(f"🔄 开始处理下载任务: {task_id}")
-        await process_download_task(task_id, db)
-        print(f"✅ 下载任务完成: {task_id}")
-    except Exception as e:
-        print(f"❌ 下载任务失败: {task_id}, 错误: {e}")
-        # 确保任务状态被更新为失败
-        try:
-            task = db.query(DownloadTask).filter(DownloadTask.task_id == task_id).first()
-            if task:
-                task.status = "failed"
-                task.error_message = str(e)
-                task.completed_at = datetime.utcnow()
-                db.commit()
-        except Exception as db_error:
-            print(f"❌ 更新任务状态失败: {db_error}")
-    finally:
-        db.close()
+def generate_file_hash(song, format_ext="mp3"):
+    """生成基于歌曲信息的唯一文件名hash"""
+    import hashlib
+    hash_source = f"{song.spotify_id}_{song.title}_{song.artist}"
+    file_hash = hashlib.md5(hash_source.encode('utf-8')).hexdigest()
+    return f"{file_hash}.{format_ext}"
 
-async def process_download_task(task_id: str, db: Session):
-    """后台处理下载任务"""
-    task = db.query(DownloadTask).filter(DownloadTask.task_id == task_id).first()
-    if not task:
-        return
+def get_file_path(song, format_ext="mp3"):
+    """获取歌曲的完整文件路径"""
+    downloads_dir = "downloads"
+    file_name = generate_file_hash(song, format_ext)
+    return os.path.join(downloads_dir, file_name)
+
+def check_file_exists(song, format_ext="mp3"):
+    """检查歌曲文件是否实际存在"""
+    # 检查请求的格式
+    file_path = get_file_path(song, format_ext)
+    if os.path.exists(file_path):
+        return True
     
-    try:
-        # 更新任务状态为处理中
-        task.status = "processing"
-        task.progress = 10
-        db.commit()
-        
-        # 解析Spotify URL
-        spotify_id, item_type = spotify_service.extract_spotify_id(task.url)
-        
-        if item_type == "track":
-            # 单首歌曲下载
-            await process_single_song(task, spotify_id, db)
-        elif item_type == "playlist":
-            # 播放列表下载
-            await process_playlist(task, spotify_id, db)
-        elif item_type == "album":
-            # 专辑下载
-            await process_album(task, spotify_id, db)
-        else:
-            raise ValueError(f"Unsupported item type: {item_type}")
-            
-    except Exception as e:
-        task.status = "failed"
-        task.error_message = str(e)
-        task.completed_at = datetime.utcnow()
-        db.commit()
-        print(f"Download task failed: {e}")
+    # 如果是mp3格式，也检查webm格式（因为实际下载的是webm）
+    if format_ext == "mp3":
+        webm_path = file_path.replace('.mp3', '.webm')
+        if os.path.exists(webm_path):
+            return True
+    
+    return False
 
-async def process_single_song(task: DownloadTask, track_id: str, db: Session):
-    """处理单首歌曲下载"""
+# Pydantic 模型
+class DownloadRequest(BaseModel):
+    spotify_id: str
+    format: str = "mp3"
+    quality: str = "high"
+
+class LibraryDownloadRequest(BaseModel):
+    library_ids: List[int]  # 收藏库记录ID列表
+    format: str = "mp3"
+    quality: str = "high"
+
+class PlaylistDownloadRequest(BaseModel):
+    playlist_id: int
+    format: str = "mp3" 
+    quality: str = "high"
+    
+class DownloadResponse(BaseModel):
+    task_id: int
+    message: str
+    batch_id: Optional[str] = None
+    total_songs: int = 1
+    
+class TaskStatus(BaseModel):
+    id: int
+    song_title: str
+    artist: str
+    status: str
+    progress: int
+    file_path: Optional[str]
+    error_message: Optional[str]
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# 临时用户ID (实际应用中从认证中获取)
+def get_current_user_id() -> int:
+    return 1
+
+# 删除这个函数，现在使用Celery任务代替
+
+@router.post("/download", response_model=DownloadResponse)
+async def create_download_task(
+    request: DownloadRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """创建单曲下载任务"""
     try:
-        # 获取Spotify信息
-        track_info = spotify_service.get_track_info(track_id)
-        task.total_songs = 1
-        task.progress = 30
-        db.commit()
+        # 检查歌曲是否存在
+        song = db.query(Song).filter(Song.spotify_id == request.spotify_id).first()
         
-        # 检查歌曲是否已存在
-        existing_song = db.query(Song).filter(Song.spotify_id == track_id).first()
-        if existing_song and existing_song.is_downloaded:
-            task.status = "completed"
-            task.completed_songs = 1
-            task.progress = 100
-            task.download_paths = [existing_song.file_path]
-            task.completed_at = datetime.utcnow()
-            db.commit()
-            return
-        
-        # 创建或更新歌曲记录
-        if not existing_song:
-            title = track_info["name"]
-            artist = ', '.join([artist['name'] for artist in track_info["artists"]])
-            album = track_info["album"]["name"] if "album" in track_info else None
+        if not song:
+            # 从Spotify获取歌曲信息
+            from app.api.spotify import spotify_service
+            track_info = spotify_service.get_track_info(request.spotify_id)
             
-            # 智能检测国家和语言
-            country, language = language_detector.detect_country_and_language(title, artist, album)
+            if not track_info:
+                raise HTTPException(status_code=404, detail="歌曲信息未找到")
             
-            # 根据专辑风格推测情绪
-            genres = track_info.get("album", {}).get("genres", [])
-            genre_str = ', '.join(genres) if genres else None
-            mood = language_detector.suggest_mood_from_genre(genre_str) if genre_str else None
+            # 创建歌曲记录
+            from app.services.language_detector import language_detector
+            artist_names = ', '.join([artist['name'] for artist in track_info['artists']])
+            country, language = language_detector.detect_country_and_language(
+                track_info['name'], artist_names, track_info.get('album', {}).get('name')
+            )
             
             song = Song(
-                title=title,
-                artist=artist,
-                album=album,
-                duration=track_info["duration_ms"] / 1000,
-                year=int(track_info["album"]["release_date"][:4]) if track_info.get("album", {}).get("release_date") else None,
-                spotify_id=track_info["id"],
-                spotify_url=track_info["external_urls"]["spotify"],
-                preview_url=track_info.get("preview_url"),
-                album_art_url=track_info["album"]["images"][0]["url"] if track_info.get("album", {}).get("images") else None,
-                track_number=track_info.get("track_number"),
-                download_status="downloading",
-                # 智能标记的属性
+                spotify_id=request.spotify_id,
+                title=track_info['name'],
+                artist=artist_names,
+                album=track_info.get('album', {}).get('name'),
+                album_art_url=track_info.get('album', {}).get('images', [{}])[0].get('url') if track_info.get('album', {}).get('images') else None,
+                preview_url=track_info.get('preview_url'),
+                spotify_url=track_info['external_urls']['spotify'],
+                duration=track_info.get('duration_ms', 0) // 1000,
+                year=int(track_info.get('album', {}).get('release_date', '')[:4]) if track_info.get('album', {}).get('release_date') else None,
                 country=country,
                 language=language,
-                mood=mood,
-                genre=genre_str
+                popularity=track_info.get('popularity', 0)
             )
             db.add(song)
-            db.commit()
-            db.refresh(song)
-        else:
-            song = existing_song
-            song.download_status = "downloading"
-            db.commit()
+            db.flush()
         
-        task.progress = 50
-        db.commit()
+        # 检查是否已有进行中或完成的下载任务
+        existing_task = db.query(DownloadTask).filter(
+            and_(
+                DownloadTask.user_id == user_id,
+                DownloadTask.song_id == song.id,
+                DownloadTask.status.in_(["pending", "downloading", "completed"])
+            )
+        ).first()
         
-        # 准备下载服务需要的歌曲信息格式
-        song_info_for_download = {
-            "name": track_info["name"],
-            "artist": ', '.join([artist['name'] for artist in track_info["artists"]]),
-            "album": track_info["album"]["name"] if "album" in track_info else None,
-            "duration_ms": track_info["duration_ms"],
-            "year": int(track_info["album"]["release_date"][:4]) if track_info.get("album", {}).get("release_date") else None,
-            "track_number": track_info.get("track_number"),
-            "album_art": track_info["album"]["images"][0]["url"] if track_info.get("album", {}).get("images") else None
-        }
+        if existing_task:
+            if existing_task.status == "completed":
+                raise HTTPException(status_code=409, detail="该歌曲已下载完成")
+            else:
+                raise HTTPException(status_code=409, detail="该歌曲正在下载中")
         
-        # 下载歌曲
-        download_result = await download_service.download_song(
-            song_info_for_download, task.format, task.quality
-        )
-        
-        if download_result["success"]:
-            # 更新歌曲信息
-            song.file_path = download_result["file_path"]
-            song.file_size = download_result["file_size"]
-            song.file_format = task.format
-            song.youtube_id = download_result.get("youtube_info", {}).get("id")
-            song.youtube_url = download_result.get("youtube_info", {}).get("url")
-            song.download_status = "completed"
-            song.is_downloaded = True
-            song.downloaded_at = datetime.utcnow()
-            
-            # 更新任务状态
-            task.status = "completed"
-            task.completed_songs = 1
-            task.progress = 100
-            task.download_paths = [download_result["file_path"]]
-            task.completed_at = datetime.utcnow()
-        else:
-            # 下载失败
-            song.download_status = "failed"
-            task.status = "failed"
-            task.failed_songs = 1
-            task.error_message = download_result["error"]
-            task.completed_at = datetime.utcnow()
-        
-        db.commit()
-        
-    except Exception as e:
-        task.status = "failed"
-        task.error_message = str(e)
-        task.completed_at = datetime.utcnow()
-        db.commit()
-
-async def process_playlist(task: DownloadTask, playlist_id: str, db: Session):
-    """处理播放列表下载"""
-    try:
-        # 获取播放列表信息
-        playlist_info = spotify_service.get_playlist_info(playlist_id)
-        tracks = playlist_info["tracks"]["items"]
-        task.total_songs = len(tracks)
-        task.progress = 20
-        db.commit()
-        
-        # 创建播放列表记录
-        playlist = Playlist(
-            name=playlist_info["name"],
-            description=playlist_info.get("description", ""),
-            owner=playlist_info["owner"]["display_name"],
-            spotify_id=playlist_info["id"],
-            spotify_url=playlist_info["external_urls"]["spotify"],
-            total_tracks=playlist_info["tracks"]["total"],
-            cover_art_url=playlist_info["images"][0]["url"] if playlist_info.get("images") else None,
-            is_public=playlist_info.get("public", True),
-            download_status="downloading"
-        )
-        db.add(playlist)
-        db.commit()
-        db.refresh(playlist)
-        
-        # 下载每首歌曲
-        completed = 0
-        failed = 0
-        download_paths = []
-        
-        for i, item in enumerate(tracks):
-            try:
-                if not item.get("track") or item["track"]["type"] != "track":
-                    continue
-                    
-                track = item["track"]
-                
-                # 准备下载服务需要的歌曲信息格式
-                song_info_for_download = {
-                    "name": track["name"],
-                    "artist": ', '.join([artist['name'] for artist in track["artists"]]),
-                    "album": track["album"]["name"] if "album" in track else None,
-                    "duration_ms": track["duration_ms"],
-                    "year": int(track["album"]["release_date"][:4]) if track.get("album", {}).get("release_date") else None,
-                    "track_number": track.get("track_number"),
-                    "album_art": track["album"]["images"][0]["url"] if track.get("album", {}).get("images") else None
-                }
-                
-                # 下载歌曲
-                download_result = await download_service.download_song(
-                    song_info_for_download, task.format, task.quality
-                )
-                
-                # 创建歌曲记录
-                song = Song(
-                    title=track["name"],
-                    artist=', '.join([artist['name'] for artist in track["artists"]]),
-                    album=track["album"]["name"] if "album" in track else None,
-                    duration=track["duration_ms"] / 1000,
-                    year=int(track["album"]["release_date"][:4]) if track.get("album", {}).get("release_date") else None,
-                    spotify_id=track["id"],
-                    spotify_url=track["external_urls"]["spotify"],
-                    preview_url=track.get("preview_url"),  # 添加试听链接
-                    album_art_url=track["album"]["images"][0]["url"] if track.get("album", {}).get("images") else None,
-                    track_number=track.get("track_number")
-                )
-                
-                if download_result["success"]:
-                    song.file_path = download_result["file_path"]
-                    song.file_size = download_result["file_size"]
-                    song.file_format = task.format
-                    song.youtube_id = download_result.get("youtube_info", {}).get("id")
-                    song.youtube_url = download_result.get("youtube_info", {}).get("url")
-                    song.download_status = "completed"
-                    song.is_downloaded = True
-                    song.downloaded_at = datetime.utcnow()
-                    download_paths.append(download_result["file_path"])
-                    completed += 1
-                else:
-                    song.download_status = "failed"
-                    failed += 1
-                
-                db.add(song)
-                playlist.songs.append(song)
-                
-                # 更新进度
-                progress = 20 + (80 * (i + 1) / len(tracks))
-                task.progress = int(progress)
-                task.completed_songs = completed
-                task.failed_songs = failed
-                db.commit()
-                
-            except Exception as e:
-                failed += 1
-                task.failed_songs = failed
-                db.commit()
-        
-        # 更新播放列表状态
-        playlist.downloaded_tracks = completed
-        playlist.download_status = "completed" if failed == 0 else "partial"
-        
-        # 更新任务状态
-        task.status = "completed"
-        task.progress = 100
-        task.download_paths = download_paths
-        task.completed_at = datetime.utcnow()
-        
-        db.commit()
-        
-    except Exception as e:
-        task.status = "failed"
-        task.error_message = str(e)
-        task.completed_at = datetime.utcnow()
-        db.commit()
-
-async def process_album(task: DownloadTask, album_id: str, db: Session):
-    """处理专辑下载 - 类似播放列表处理"""
-    try:
-        album_info = spotify_service.get_album_info(album_id)
-        # 将专辑作为播放列表处理
-        playlist_info = {
-            "name": album_info["name"],
-            "description": f"Album by {album_info['artist']}",
-            "owner": album_info["artist"],
-            "id": album_info["id"],
-            "spotify_url": album_info["spotify_url"],
-            "total_tracks": album_info["total_tracks"],
-            "cover_art": album_info["cover_art"],
-            "public": True,
-            "tracks": album_info["tracks"]
-        }
-        await process_playlist(task, album_id, db)
-    except Exception as e:
-        task.status = "failed"
-        task.error_message = str(e)
-        task.completed_at = datetime.utcnow()
-        db.commit()
-
-@router.post("/download", response_model=DownloadTaskResponse)
-async def download_song(
-    request: DownloadRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """下载单首歌曲或开始下载任务"""
-    try:
-        # 验证URL
-        spotify_id, item_type = spotify_service.extract_spotify_id(request.url)
-        
-        # 获取歌曲信息以存储元数据
-        task_metadata = {}
-        if request.metadata:
-            task_metadata = {
-                "title": request.metadata.get("title", "未知歌曲"),
-                "artist": request.metadata.get("artist", "未知艺术家"),
-                "album": request.metadata.get("album", "未知专辑"),
-                "album_art": request.metadata.get("album_art")
-            }
-        else:
-            # 尝试从 Spotify 获取信息
-            try:
-                if item_type == "track":
-                    print(f"🎵 获取 Spotify 歌曲信息: {spotify_id}")
-                    track_info = spotify_service.get_track_info(spotify_id)
-                    task_metadata = {
-                        "title": track_info["name"],
-                        "artist": ', '.join([artist['name'] for artist in track_info["artists"]]),
-                        "album": track_info["album"]["name"] if "album" in track_info else None,
-                        "album_art": track_info["album"]["images"][0]["url"] if track_info.get("album", {}).get("images") else None
-                    }
-                    print(f"✅ 获取歌曲信息成功: {task_metadata['title']} - {task_metadata['artist']}")
-                elif item_type in ["playlist", "album"]:
-                    # 对于播放列表和专辑，先获取基本信息
-                    if item_type == "playlist":
-                        playlist_info = spotify_service.get_playlist_info(spotify_id)
-                        task_metadata = {
-                            "title": f"播放列表: {playlist_info['name']}",
-                            "artist": f"by {playlist_info['owner']['display_name']}",
-                            "album": f"{playlist_info['tracks']['total']} 首歌曲",
-                            "album_art": playlist_info["images"][0]["url"] if playlist_info.get("images") else None
-                        }
-                    else:  # album
-                        album_info = spotify_service.get_album_info(spotify_id)
-                        task_metadata = {
-                            "title": f"专辑: {album_info['name']}",
-                            "artist": ', '.join([artist['name'] for artist in album_info["artists"]]),
-                            "album": f"{len(album_info['tracks']['items'])} 首歌曲",
-                            "album_art": album_info["images"][0]["url"] if album_info.get("images") else None
-                        }
-            except Exception as e:
-                print(f"❌ 获取 Spotify 信息失败: {e}")
-                task_metadata = {
-                    "title": "未知歌曲",
-                    "artist": "未知艺术家",
-                    "album": "未知专辑"
-                }
-
         # 创建下载任务
-        task = DownloadTask(
-            task_type=item_type,
-            url=request.url,
+        download_task = DownloadTask(
+            user_id=user_id,
+            song_id=song.id,
+            url=song.spotify_url,
             format=request.format,
             quality=request.quality,
-            callback_url=request.callback_url,
-            status="pending",
-            task_metadata=task_metadata
+            task_type="single"
         )
-        db.add(task)
+        
+        db.add(download_task)
         db.commit()
-        db.refresh(task)
         
-        # 添加后台任务 - 创建新的数据库会话
-        background_tasks.add_task(process_download_task_async, task.task_id)
+        # 使用Celery异步任务
+        from app.tasks.download_tasks import download_single_track
+        celery_task = download_single_track.delay(download_task.id)
         
-        return DownloadTaskResponse(**task.to_dict())
+        return DownloadResponse(
+            task_id=download_task.id,
+            message="下载任务已创建",
+            total_songs=1
+        )
         
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/download-playlist", response_model=DownloadTaskResponse)
-async def download_playlist(
-    request: PlaylistDownloadRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """下载播放列表"""
-    return await download_song(
-        DownloadRequest(**request.dict()),
-        background_tasks,
-        db
-    )
-
-@router.get("/status/{task_id}", response_model=DownloadStatusResponse)
-async def get_download_status(task_id: str, db: Session = Depends(get_db)):
-    """获取下载任务状态"""
-    task = db.query(DownloadTask).filter(DownloadTask.task_id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    return DownloadStatusResponse(
-        task_id=task.task_id,
-        status=task.status,
-        progress=task.progress,
-        total_songs=task.total_songs,
-        completed_songs=task.completed_songs,
-        failed_songs=task.failed_songs,
-        download_paths=task.download_paths,
-        error_message=task.error_message,
-        created_at=task.created_at,
-        completed_at=task.completed_at
-    )
-
-@router.post("/search-youtube", response_model=List[YouTubeSearchResult])
-async def search_youtube(request: SearchRequest):
-    """搜索YouTube视频"""
-    try:
-        results = download_service.search_youtube(request.query, request.limit)
-        return [YouTubeSearchResult(**result) for result in results]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/get-stream-url")
-async def get_stream_url(request: dict):
-    """获取歌曲的直接播放链接"""
-    try:
-        query = request.get("query")
-        if not query:
-            raise HTTPException(status_code=400, detail="Missing query parameter")
-        
-        # 先搜索 YouTube
-        search_results = download_service.search_youtube(query, limit=1)
-        if not search_results:
-            raise HTTPException(status_code=404, detail="No YouTube results found")
-        
-        # 获取第一个结果的播放链接
-        youtube_url = search_results[0]['url']
-        stream_result = download_service.get_stream_url(youtube_url)
-        
-        if stream_result['success']:
-            return {
-                "success": True,
-                "stream_url": stream_result['stream_url'],
-                "youtube_info": search_results[0],
-                "title": stream_result['title'],
-                "duration": stream_result['duration'],
-                "thumbnail": stream_result['thumbnail']
-            }
-        else:
-            raise HTTPException(status_code=500, detail=stream_result['error'])
-            
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"创建下载任务失败: {str(e)}")
 
-@router.delete("/tasks/clear", response_model=ApiResponse)
+@router.post("/download/library", response_model=DownloadResponse)
+async def download_from_library(
+    request: LibraryDownloadRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """从收藏库批量下载"""
+    try:
+        # 验证收藏库记录
+        library_entries = db.query(MusicLibrary).filter(
+            and_(
+                MusicLibrary.user_id == user_id,
+                MusicLibrary.id.in_(request.library_ids)
+            )
+        ).all()
+        
+        if len(library_entries) != len(request.library_ids):
+            raise HTTPException(status_code=400, detail="部分歌曲不在您的收藏库中")
+        
+        # 过滤已下载的歌曲
+        to_download = [entry for entry in library_entries if not entry.is_downloaded]
+        
+        if not to_download:
+            raise HTTPException(status_code=409, detail="所选歌曲均已下载")
+        
+        # 生成批次ID
+        batch_id = str(uuid.uuid4())
+        tasks_created = []
+        
+        # 为每首歌创建下载任务
+        for entry in to_download:
+            # 检查是否已有进行中的任务
+            existing_task = db.query(DownloadTask).filter(
+                and_(
+                    DownloadTask.user_id == user_id,
+                    DownloadTask.song_id == entry.song_id,
+                    DownloadTask.status.in_(["pending", "downloading"])
+                )
+            ).first()
+            
+            if existing_task:
+                continue  # 跳过已有任务的歌曲
+            
+            download_task = DownloadTask(
+                user_id=user_id,
+                song_id=entry.song_id,
+                url=entry.song.spotify_url,
+                format=request.format,
+                quality=request.quality,
+                task_type="library_batch",
+                batch_id=batch_id
+            )
+            
+            db.add(download_task)
+            tasks_created.append(download_task)
+        
+        db.commit()
+        
+        # 使用Celery批量下载任务
+        if tasks_created:
+            task_ids = [task.id for task in tasks_created]
+            from app.tasks.download_tasks import download_batch_tracks
+            celery_task = download_batch_tracks.delay(task_ids, batch_id)
+        
+        return DownloadResponse(
+            task_id=tasks_created[0].id if tasks_created else 0,
+            message=f"已创建 {len(tasks_created)} 个下载任务",
+            batch_id=batch_id,
+            total_songs=len(tasks_created)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"批量下载失败: {str(e)}")
+
+@router.post("/download/playlist", response_model=DownloadResponse)
+async def download_playlist(
+    request: PlaylistDownloadRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """下载整个歌单"""
+    try:
+        # 验证歌单所有权
+        playlist = db.query(Playlist).filter(
+            and_(Playlist.id == request.playlist_id, Playlist.user_id == user_id)
+        ).first()
+        
+        if not playlist:
+            raise HTTPException(status_code=404, detail="歌单未找到")
+        
+        # 获取歌单中的所有歌曲
+        playlist_songs = db.query(PlaylistSong).join(Song).filter(
+            PlaylistSong.playlist_id == request.playlist_id
+        ).order_by(PlaylistSong.position).all()
+        
+        if not playlist_songs:
+            raise HTTPException(status_code=400, detail="歌单为空")
+        
+        # 过滤有正在进行下载任务的歌曲
+        to_download = []
+        for ps in playlist_songs:
+            # 检查是否有正在进行的下载任务
+            existing_task = db.query(DownloadTask).filter(
+                and_(
+                    DownloadTask.user_id == user_id,
+                    DownloadTask.song_id == ps.song_id,
+                    DownloadTask.status.in_(["pending", "downloading"])
+                )
+            ).first()
+            
+            if not existing_task:
+                to_download.append(ps)
+        
+        if not to_download:
+            raise HTTPException(status_code=409, detail="歌单中的歌曲正在下载中，请稍后再试")
+        
+        # 生成批次ID
+        batch_id = str(uuid.uuid4())
+        tasks_created = []
+        
+        # 为每首歌创建下载任务
+        for ps in to_download:
+            # 检查是否已有进行中的任务
+            existing_task = db.query(DownloadTask).filter(
+                and_(
+                    DownloadTask.user_id == user_id,
+                    DownloadTask.song_id == ps.song_id,
+                    DownloadTask.status.in_(["pending", "downloading"])
+                )
+            ).first()
+            
+            if existing_task:
+                continue
+            
+            download_task = DownloadTask(
+                user_id=user_id,
+                song_id=ps.song_id,
+                playlist_id=request.playlist_id,
+                url=ps.song.spotify_url,
+                format=request.format,
+                quality=request.quality,
+                task_type="playlist",
+                batch_id=batch_id
+            )
+            
+            db.add(download_task)
+            tasks_created.append(download_task)
+        
+        db.commit()
+        
+        # 使用Celery歌单下载任务
+        from app.tasks.download_tasks import download_playlist_task
+        celery_task = download_playlist_task.delay(
+            request.playlist_id, 
+            user_id, 
+            request.format, 
+            request.quality
+        )
+        
+        return DownloadResponse(
+            task_id=tasks_created[0].id if tasks_created else 0,
+            message=f"歌单下载已启动，共 {len(tasks_created)} 首歌曲",
+            batch_id=batch_id,
+            total_songs=len(tasks_created)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"歌单下载失败: {str(e)}")
+
+@router.get("/tasks")
+async def get_download_tasks(
+    page: int = 1,
+    per_page: int = 20,
+    status: Optional[str] = None,
+    batch_id: Optional[str] = None,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """获取下载任务列表"""
+    try:
+        query = db.query(DownloadTask).join(Song).filter(DownloadTask.user_id == user_id)
+        
+        if status:
+            query = query.filter(DownloadTask.status == status)
+        
+        if batch_id:
+            query = query.filter(DownloadTask.batch_id == batch_id)
+        
+        # 按创建时间倒序
+        query = query.order_by(DownloadTask.created_at.desc())
+        
+        total = query.count()
+        offset = (page - 1) * per_page
+        tasks = query.offset(offset).limit(per_page).all()
+        
+        task_list = []
+        for task in tasks:
+            task_list.append(TaskStatus(
+                id=task.id,
+                song_title=task.song.title,
+                artist=task.song.artist,
+                status=task.status,
+                progress=task.progress,
+                file_path=task.file_path,
+                error_message=task.error_message,
+                created_at=task.created_at
+            ))
+        
+        return {
+            "tasks": task_list,
+            "total": total,
+            "page": page,
+            "per_page": per_page
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取任务列表失败: {str(e)}")
+
+@router.delete("/tasks/clear-all")
 async def clear_download_tasks(
-    status: Optional[str] = Query(None),
+    status: Optional[str] = None,
+    user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     """清除下载任务记录"""
     try:
-        query = db.query(DownloadTask)
-        
-        # 可选按状态过滤
+        # 首先清除music_library中的download_task_id引用
         if status:
-            query = query.filter(DownloadTask.status == status)
+            # 获取要删除的任务ID
+            task_ids = db.query(DownloadTask.id).filter(
+                and_(DownloadTask.user_id == user_id, DownloadTask.status == status)
+            ).all()
+            task_ids = [t[0] for t in task_ids]
+            
+            if task_ids:
+                # 清除引用
+                db.query(MusicLibrary).filter(
+                    MusicLibrary.download_task_id.in_(task_ids)
+                ).update({MusicLibrary.download_task_id: None}, synchronize_session=False)
+                
+                # 删除特定状态的任务
+                deleted_count = db.query(DownloadTask).filter(
+                    and_(DownloadTask.user_id == user_id, DownloadTask.status == status)
+                ).delete()
+        else:
+            # 获取所有任务ID
+            task_ids = db.query(DownloadTask.id).filter(DownloadTask.user_id == user_id).all()
+            task_ids = [t[0] for t in task_ids]
+            
+            if task_ids:
+                # 清除所有引用
+                db.query(MusicLibrary).filter(
+                    MusicLibrary.download_task_id.in_(task_ids)
+                ).update({MusicLibrary.download_task_id: None}, synchronize_session=False)
+                
+                # 删除所有任务
+                deleted_count = db.query(DownloadTask).filter(DownloadTask.user_id == user_id).delete()
+            else:
+                deleted_count = 0
         
-        # 获取要删除的任务数量
-        count = query.count()
-        
-        # 删除任务
-        query.delete()
         db.commit()
         
-        return ApiResponse(
-            success=True, 
-            message=f"成功清除 {count} 条下载记录"
-        )
+        return {
+            "message": f"已清除 {deleted_count} 条下载记录",
+            "deleted_count": deleted_count
+        }
+        
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"清除记录失败: {str(e)}")
+
+@router.delete("/tasks/{task_id}")
+async def cancel_download_task(
+    task_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """取消下载任务"""
+    try:
+        task = db.query(DownloadTask).filter(
+            and_(DownloadTask.id == task_id, DownloadTask.user_id == user_id)
+        ).first()
+        
+        if not task:
+            raise HTTPException(status_code=404, detail="任务未找到")
+        
+        if task.status == "completed":
+            raise HTTPException(status_code=400, detail="已完成的任务无法取消")
+        
+        if task.status in ["pending", "downloading"]:
+            task.status = "cancelled"
+            db.commit()
+            return {"message": "任务已取消"}
+        else:
+            raise HTTPException(status_code=400, detail="任务状态不允许取消")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"取消任务失败: {str(e)}")
+
+@router.get("/download/stats")
+async def get_download_stats(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """获取下载统计信息"""
+    try:
+        total_tasks = db.query(DownloadTask).filter(DownloadTask.user_id == user_id).count()
+        completed_tasks = db.query(DownloadTask).filter(
+            and_(DownloadTask.user_id == user_id, DownloadTask.status == "completed")
+        ).count()
+        failed_tasks = db.query(DownloadTask).filter(
+            and_(DownloadTask.user_id == user_id, DownloadTask.status == "failed")
+        ).count()
+        pending_tasks = db.query(DownloadTask).filter(
+            and_(DownloadTask.user_id == user_id, DownloadTask.status.in_(["pending", "downloading"]))
+        ).count()
+        
+        return {
+            "total_tasks": total_tasks,
+            "completed": completed_tasks,
+            "failed": failed_tasks,
+            "pending": pending_tasks,
+            "success_rate": completed_tasks / total_tasks if total_tasks > 0 else 0
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")

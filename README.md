@@ -1,79 +1,151 @@
+# 🎵 Music Downloader API
 
-# Music Downloader API
+现代化的音乐下载和管理系统，支持Spotify搜索、多类型搜索、歌单管理等功能。
 
-专为Laravel后端设计的音乐下载微服务，支持Spotify和YouTube音乐下载。
+## ✨ 特性
 
-## 🎯 核心功能
+- 🔍 **智能搜索**: 支持歌曲、歌单、专辑、艺人多类型搜索
+- 🎵 **Spotify集成**: 无缝集成Spotify API，获取丰富的音乐信息
+- 📱 **响应式前端**: 模块化Vue.js前端，支持移动端
+- 🗄️ **MySQL数据库**: 持久化存储音乐信息和用户数据
+- ⚡ **Redis缓存**: 高性能缓存提升搜索速度
+- 📥 **下载管理**: 支持多种音频格式和质量选择
+- 🎼 **歌单管理**: 创建、编辑、分享个人歌单
+- 🌍 **多语言支持**: 智能识别歌曲语言和国家信息
 
-- **Laravel集成**: 专为Laravel后端调用设计的RESTful API
-- **链接下载**: 支持Spotify歌曲/播放列表链接直接下载
-- **数据库存储**: 自动存储歌曲信息和下载历史
-- **Web管理**: 简单的Web界面管理下载任务
-- **异步处理**: 支持大批量下载任务
+## 🏗️ 架构
+
+```
+music-downloader-api/
+├── 📁 app/                 # 后端应用
+│   ├── 📁 api/            # API路由
+│   ├── 📁 core/           # 核心配置
+│   ├── 📁 database/       # 数据库模型和连接
+│   └── 📁 services/       # 业务逻辑服务
+├── 📁 frontend/           # 前端应用
+│   ├── 📁 js/            # JavaScript模块
+│   │   ├── 📁 components/ # Vue组件
+│   │   ├── 📁 services/   # API服务
+│   │   └── 📁 utils/      # 工具函数
+│   ├── 📁 css/           # 样式文件
+│   └── 📄 index.html     # 主页面
+├── 📁 database/          # 数据库脚本
+├── 📄 docker-compose.yml # Docker配置
+├── 📄 requirements.txt   # Python依赖
+└── 📄 README.md          # 项目文档
+```
 
 ## 🚀 快速开始
 
-### 安装依赖
-```bash
-uv sync
-```
+### 前置要求
 
-### 启动服务
-```bash
-# 开发模式
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+- Docker & Docker Compose
+- Python 3.8+
+- Git
 
-# 生产模式  
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
+### 安装步骤
 
-### API文档
-访问 `http://localhost:8000/docs` 查看交互式API文档
+1. **克隆项目**
+   ```bash
+   git clone <repository-url>
+   cd music-downloader-api
+   ```
 
-## 📋 Laravel调用示例
+2. **启动项目**
+   ```bash
+   ./start.sh
+   ```
 
-```php
-// 下载单首歌曲
-$response = Http::post('http://localhost:8000/api/download', [
-    'url' => 'https://open.spotify.com/track/...',
-    'format' => 'mp3',
-    'quality' => '320k'
-]);
+3. **访问应用**
+   - 前端页面: http://localhost:8000
+   - API文档: http://localhost:8000/docs
 
-// 下载播放列表
-$response = Http::post('http://localhost:8000/api/download-playlist', [
-    'url' => 'https://open.spotify.com/playlist/...',
-    'callback_url' => 'https://your-site.com/api/download-complete'
-]);
+### 手动启动
 
-// 获取下载状态
-$response = Http::get('http://localhost:8000/api/status/{task_id}');
+如果自动脚本无法使用：
 
-// 获取所有歌曲
-$response = Http::get('http://localhost:8000/api/songs?page=1&limit=50');
-```
+1. **启动数据库**
+   ```bash
+   docker-compose up -d mysql redis
+   ```
+
+2. **安装Python依赖**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+3. **启动后端服务**
+   ```bash
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
 
 ## 🔧 配置
 
-创建 `.env` 文件：
+### 环境变量
+
+复制 `.env.example` 到 `.env` 并修改配置：
+
 ```env
-DATABASE_URL=sqlite:///./music_downloader.db
-SPOTIFY_CLIENT_ID=your_spotify_client_id
-SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
-DOWNLOAD_PATH=/path/to/downloads
-SECRET_KEY=your_secret_key
+# 数据库配置
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=music_user
+DB_PASSWORD=music_pass
+
+# Redis配置
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=musicredis2024
+
+# Spotify API
+SPOTIFY_CLIENT_ID=your_client_id
+SPOTIFY_CLIENT_SECRET=your_client_secret
 ```
 
-## 📊 数据库结构
+## 📖 API文档
 
-- **songs**: 歌曲信息表
-- **playlists**: 播放列表表
-- **downloads**: 下载记录表
-- **download_tasks**: 下载任务表
+### 搜索接口
 
-## 🌐 Web界面
+- `GET /api/spotify/search` - 基础搜索
+- `GET /api/spotify/search-multi` - 多类型搜索
+- `GET /api/spotify/search-playlists` - 歌单搜索
+- `POST /api/spotify/parse` - Spotify URL解析
 
-访问 `http://localhost:8000` 打开Web管理界面
-=======
+### 下载接口
 
+- `POST /api/download` - 创建下载任务
+- `GET /api/tasks` - 获取下载任务列表
+- `DELETE /api/tasks/{id}` - 取消下载任务
 
+### 歌单接口
+
+- `GET /api/playlists` - 获取歌单列表
+- `POST /api/playlists` - 创建新歌单
+- `PUT /api/playlists/{id}` - 更新歌单
+- `DELETE /api/playlists/{id}` - 删除歌单
+
+详细API文档请访问: http://localhost:8000/docs
+
+## 🚀 启动项目
+
+```bash
+# 快速启动
+./start.sh
+
+# 停止项目
+./stop.sh
+```
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📄 许可证
+
+MIT License
+
+---
+
+⭐ 如果这个项目对你有帮助，请给它一个 Star！

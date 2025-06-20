@@ -1,0 +1,35 @@
+[Unit]
+Description=Music Downloader API Service
+After=network.target redis.service mysql.service
+Wants=redis.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/music-downloader-api
+Environment=PATH=/opt/music-downloader-api/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/opt/music-downloader-api
+ExecStart=/opt/music-downloader-api/venv/bin/python /opt/music-downloader-api/start_all.py
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=music-downloader
+
+# 安全配置
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/music-downloader-api/logs
+ReadWritePaths=/opt/music-downloader-api/downloads
+ReadWritePaths=/opt/music-downloader-api/pids
+
+[Install]
+WantedBy=multi-user.target

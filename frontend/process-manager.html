@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>进程管理器 - Music Downloader</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <link href="https://unpkg.com/tailwindcss@^2/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .process-card {
+            transition: all 0.3s ease;
+        }
+        .process-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        }
+        .status-running { @apply bg-green-100 text-green-800; }
+        .status-stopped { @apply bg-gray-100 text-gray-800; }
+        .status-failed { @apply bg-red-100 text-red-800; }
+        .status-starting { @apply bg-blue-100 text-blue-800; }
+        .status-stopping { @apply bg-yellow-100 text-yellow-800; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="app">
+        <!-- 顶部导航 -->
+        <nav class="bg-white shadow-sm border-b">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between items-center h-16">
+                    <div class="flex items-center">
+                        <h1 class="text-xl font-bold text-gray-900">
+                            <i class="fas fa-server text-blue-600 mr-2"></i>
+                            进程管理器
+                        </h1>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <button @click="refreshStatus" 
+                                :disabled="loading"
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition">
+                            <i class="fas fa-sync mr-2" :class="{'fa-spin': loading}"></i>
+                            刷新状态
+                        </button>
+                        <a href="/" class="text-gray-600 hover:text-gray-900">
+                            <i class="fas fa-home mr-1"></i>返回主页
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <!-- 系统概览 -->
+            <div class="mb-8">
+                <h2 class="text-2xl font-bold text-gray-900 mb-4">系统概览</h2>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="bg-white rounded-lg shadow p-6">
+                        <div class="flex items-center">
+                            <div class="p-2 bg-green-100 rounded-lg">
+                                <i class="fas fa-play text-green-600"></i>
+                            </div>
+                            <div class="ml-4">
+                                <p class="text-sm font-medium text-gray-600">运行中</p>
+                                <p class="text-2xl font-bold text-gray-900">{{ runningCount }}</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white rounded-lg shadow p-6">
+                        <div class="flex items-center">
+                            <div class="p-2 bg-gray-100 rounded-lg">
+                                <i class="fas fa-stop text-gray-600"></i>
+                            </div>
+                            <div class="ml-4">
+                                <p class="text-sm font-medium text-gray-600">已停止</p>
+                                <p class="text-2xl font-bold text-gray-900">{{ stoppedCount }}</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white rounded-lg shadow p-6">
+                        <div class="flex items-center">
+                            <div class="p-2 bg-red-100 rounded-lg">
+                                <i class="fas fa-exclamation-triangle text-red-600"></i>
+                            </div>
+                            <div class="ml-4">
+                                <p class="text-sm font-medium text-gray-600">失败</p>
+                                <p class="text-2xl font-bold text-gray-900">{{ failedCount }}</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white rounded-lg shadow p-6">
+                        <div class="flex items-center">
+                            <div class="p-2 bg-blue-100 rounded-lg">
+                                <i class="fas fa-cogs text-blue-600"></i>
+                            </div>
+                            <div class="ml-4">
+                                <p class="text-sm font-medium text-gray-600">总进程</p>
+                                <p class="text-2xl font-bold text-gray-900">{{ totalCount }}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 批量操作 -->
+            <div class="mb-6">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold mb-4">批量操作</h3>
+                    <div class="flex flex-wrap gap-3">
+                        <button @click="startAll" 
+                                :disabled="loading"
+                                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition">
+                            <i class="fas fa-play mr-2"></i>启动所有服务
+                        </button>
+                        <button @click="stopAll" 
+                                :disabled="loading"
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition">
+                            <i class="fas fa-stop mr-2"></i>停止所有服务
+                        </button>
+                        <button @click="restartAll" 
+                                :disabled="loading"
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition">
+                            <i class="fas fa-redo mr-2"></i>重启所有服务
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 进程列表 -->
+            <div class="bg-white rounded-lg shadow">
+                <div class="px-6 py-4 border-b">
+                    <h3 class="text-lg font-semibold">进程列表</h3>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6" v-if="processes && Object.keys(processes).length > 0">
+                    <div v-for="(process, name) in processes" :key="name" 
+                         class="process-card border rounded-lg p-6">
+                        
+                        <!-- 进程头部 -->
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h4 class="text-lg font-semibold text-gray-900">{{ name }}</h4>
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                                      :class="`status-${process.status}`">
+                                    <i class="fas mr-1" :class="{
+                                        'fa-play': process.status === 'running',
+                                        'fa-stop': process.status === 'stopped',
+                                        'fa-exclamation': process.status === 'failed',
+                                        'fa-spinner fa-spin': process.status === 'starting',
+                                        'fa-pause': process.status === 'stopping'
+                                    }"></i>
+                                    {{ getStatusText(process.status) }}
+                                </span>
+                            </div>
+                            
+                            <!-- 进程操作按钮 -->
+                            <div class="flex space-x-2">
+                                <button v-if="process.status === 'stopped' || process.status === 'failed'"
+                                        @click="startProcess(name)"
+                                        :disabled="loading"
+                                        class="p-2 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                                        title="启动">
+                                    <i class="fas fa-play"></i>
+                                </button>
+                                
+                                <button v-if="process.status === 'running'"
+                                        @click="stopProcess(name)"
+                                        :disabled="loading"
+                                        class="p-2 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                        title="停止">
+                                    <i class="fas fa-stop"></i>
+                                </button>
+                                
+                                <button @click="restartProcess(name)"
+                                        :disabled="loading"
+                                        class="p-2 text-blue-600 hover:bg-blue-50 rounded disabled:opacity-50"
+                                        title="重启">
+                                    <i class="fas fa-redo"></i>
+                                </button>
+                                
+                                <button @click="viewLogs(name)"
+                                        class="p-2 text-gray-600 hover:bg-gray-50 rounded"
+                                        title="查看日志">
+                                    <i class="fas fa-file-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- 进程信息 -->
+                        <div class="space-y-2 text-sm text-gray-600">
+                            <div v-if="process.pid" class="flex justify-between">
+                                <span>PID:</span>
+                                <span class="font-mono">{{ process.pid }}</span>
+                            </div>
+                            
+                            <div v-if="process.start_time" class="flex justify-between">
+                                <span>启动时间:</span>
+                                <span>{{ formatTime(process.start_time) }}</span>
+                            </div>
+                            
+                            <div v-if="process.restart_count > 0" class="flex justify-between">
+                                <span>重启次数:</span>
+                                <span>{{ process.restart_count }}</span>
+                            </div>
+                            
+                            <div v-if="process.cpu_percent > 0" class="flex justify-between">
+                                <span>CPU:</span>
+                                <span>{{ process.cpu_percent.toFixed(1) }}%</span>
+                            </div>
+                            
+                            <div v-if="process.memory_mb > 0" class="flex justify-between">
+                                <span>内存:</span>
+                                <span>{{ process.memory_mb.toFixed(1) }}MB</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 空状态 -->
+                <div v-else class="text-center py-12">
+                    <i class="fas fa-server text-4xl text-gray-400 mb-4"></i>
+                    <p class="text-gray-500">暂无进程信息</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 日志查看模态框 -->
+        <div v-if="showLogsModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg w-full max-w-4xl h-3/4 flex flex-col">
+                <div class="flex justify-between items-center p-6 border-b">
+                    <h3 class="text-lg font-semibold">{{ currentLogProcess }} - 进程日志</h3>
+                    <button @click="showLogsModal = false" class="text-gray-400 hover:text-gray-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="flex-1 p-6 overflow-hidden">
+                    <div class="h-full bg-gray-900 text-green-400 rounded p-4 overflow-y-auto font-mono text-sm">
+                        <div v-if="logs.length === 0" class="text-gray-500">暂无日志</div>
+                        <div v-for="(line, index) in logs" :key="index" class="whitespace-pre-wrap">{{ line }}</div>
+                    </div>
+                </div>
+                
+                <div class="p-6 border-t">
+                    <button @click="refreshLogs" 
+                            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 mr-3">
+                        <i class="fas fa-sync mr-2"></i>刷新日志
+                    </button>
+                    <button @click="showLogsModal = false" 
+                            class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400">
+                        关闭
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        
+        createApp({
+            data() {
+                return {
+                    processes: {},
+                    loading: false,
+                    showLogsModal: false,
+                    currentLogProcess: '',
+                    logs: []
+                }
+            },
+            computed: {
+                runningCount() {
+                    return Object.values(this.processes).filter(p => p.status === 'running').length;
+                },
+                stoppedCount() {
+                    return Object.values(this.processes).filter(p => p.status === 'stopped').length;
+                },
+                failedCount() {
+                    return Object.values(this.processes).filter(p => p.status === 'failed').length;
+                },
+                totalCount() {
+                    return Object.keys(this.processes).length;
+                }
+            },
+            methods: {
+                async refreshStatus() {
+                    this.loading = true;
+                    try {
+                        const response = await axios.get('/api/processes/status');
+                        this.processes = response.data.data;
+                    } catch (error) {
+                        console.error('获取进程状态失败:', error);
+                        alert('获取进程状态失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async startProcess(name) {
+                    this.loading = true;
+                    try {
+                        await axios.post('/api/processes/start', { names: [name] });
+                        await this.refreshStatus();
+                    } catch (error) {
+                        alert('启动进程失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async stopProcess(name) {
+                    this.loading = true;
+                    try {
+                        await axios.post('/api/processes/stop', { names: [name] });
+                        await this.refreshStatus();
+                    } catch (error) {
+                        alert('停止进程失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async restartProcess(name) {
+                    this.loading = true;
+                    try {
+                        await axios.post('/api/processes/restart', { names: [name] });
+                        await this.refreshStatus();
+                    } catch (error) {
+                        alert('重启进程失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async startAll() {
+                    this.loading = true;
+                    try {
+                        await axios.post('/api/processes/start', { names: [] });
+                        await this.refreshStatus();
+                    } catch (error) {
+                        alert('启动所有服务失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async stopAll() {
+                    if (!confirm('确定要停止所有服务吗？')) return;
+                    
+                    this.loading = true;
+                    try {
+                        await axios.post('/api/processes/stop', { names: [] });
+                        await this.refreshStatus();
+                    } catch (error) {
+                        alert('停止所有服务失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async restartAll() {
+                    if (!confirm('确定要重启所有服务吗？')) return;
+                    
+                    this.loading = true;
+                    try {
+                        const runningProcesses = Object.keys(this.processes).filter(
+                            name => this.processes[name].status === 'running'
+                        );
+                        await axios.post('/api/processes/restart', { names: runningProcesses });
+                        await this.refreshStatus();
+                    } catch (error) {
+                        alert('重启所有服务失败: ' + error.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async viewLogs(name) {
+                    this.currentLogProcess = name;
+                    this.showLogsModal = true;
+                    await this.refreshLogs();
+                },
+                
+                async refreshLogs() {
+                    try {
+                        const response = await axios.get(`/api/processes/logs/${this.currentLogProcess}?lines=100`);
+                        this.logs = response.data.data.logs;
+                    } catch (error) {
+                        console.error('获取日志失败:', error);
+                        this.logs = ['获取日志失败: ' + error.message];
+                    }
+                },
+                
+                getStatusText(status) {
+                    const statusMap = {
+                        'running': '运行中',
+                        'stopped': '已停止',
+                        'failed': '失败',
+                        'starting': '启动中',
+                        'stopping': '停止中'
+                    };
+                    return statusMap[status] || status;
+                },
+                
+                formatTime(timeStr) {
+                    if (!timeStr) return '-';
+                    return new Date(timeStr).toLocaleString('zh-CN');
+                }
+            },
+            mounted() {
+                this.refreshStatus();
+                
+                // 每10秒自动刷新状态
+                setInterval(() => {
+                    if (!this.loading) {
+                        this.refreshStatus();
+                    }
+                }, 10000);
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

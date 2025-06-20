@@ -1,0 +1,56 @@
+# FastAPI和Web框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+jinja2==3.1.2
+
+# 数据库相关
+sqlalchemy==2.0.23
+pymysql==1.1.0
+alembic==1.12.1
+
+# Redis缓存
+redis==5.0.1
+aioredis==2.0.1
+
+# Spotify API
+spotipy==2.23.0
+
+# 音频处理
+yt-dlp>=2025.6.9
+pydub==0.25.1
+mutagen==1.47.0
+
+# 数据验证和序列化
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# HTTP客户端
+httpx==0.25.2
+aiohttp==3.9.1
+
+# 工具库
+python-dotenv==1.0.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-slugify==8.0.1
+
+# 日志和监控
+loguru==0.7.2
+
+# 任务队列
+celery==5.3.4
+kombu==5.3.4
+
+# 文件处理
+pillow==10.1.0
+
+# 数据分析
+pandas>=2.1.0
+numpy>=1.26.0
+
+# 进程监控
+psutil==5.9.6
+
+# 生产环境部署
+gunicorn==21.2.0

@@ -1,0 +1,118 @@
+
+services:
+  # MySQL数据库
+  mysql:
+    image: mysql:8.0
+    container_name: music_downloader_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: musicdownloader2024
+      MYSQL_DATABASE: music_downloader
+      MYSQL_USER: music_user
+      MYSQL_PASSWORD: music_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init:/docker-entrypoint-initdb.d
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: music_downloader_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"  # 改为标准端口
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # API服务容器
+  api:
+    build: .
+    container_name: music_downloader_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=music_user
+      - DB_PASSWORD=music_pass
+      - DB_NAME=music_downloader
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PYTHONPATH=/app
+    volumes:
+      - ./app:/app/app              # 同步app目录代码
+      - ./frontend:/app/frontend    # 同步前端代码
+      - ./downloads:/app/downloads
+      - ./logs:/app/logs
+      - ./.env:/app/.env            # 同步环境配置
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celery Worker容器
+  celery-worker:
+    build: .
+    container_name: music_downloader_celery
+    restart: unless-stopped
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=music_user
+      - DB_PASSWORD=music_pass
+      - DB_NAME=music_downloader
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PYTHONPATH=/app
+    volumes:
+      - ./app:/app/app              # 同步app目录代码
+      - ./downloads:/app/downloads
+      - ./logs:/app/logs
+      - ./.env:/app/.env            # 同步环境配置
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    command: python -m celery -A app.celery_app worker --loglevel=info --concurrency=4 --queues=batch,download,default
+    healthcheck:
+      test: ["CMD", "python", "-c", "import redis; r=redis.Redis(host='redis', port=6379); r.ping()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  default:
+    name: music-downloader-network

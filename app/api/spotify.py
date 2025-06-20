@@ -4,6 +4,57 @@ from typing import List, Optional
 from app.services.spotify_service import SpotifyService
 import re
 
+def detect_country_from_track(track_info):
+    """从歌曲信息智能识别国家"""
+    artist_names = ', '.join([artist['name'] for artist in track_info.get('artists', [])])
+    title = track_info.get('name', '')
+    
+    # 中文字符检测
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', f"{title} {artist_names}")
+    if len(chinese_chars) > 2:
+        return 'china'
+    
+    # 韩文字符检测
+    korean_chars = re.findall(r'[\uac00-\ud7af]', f"{title} {artist_names}")
+    if len(korean_chars) > 2:
+        return 'korea'
+    
+    # 日文字符检测（平假名、片假名）
+    japanese_chars = re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', f"{title} {artist_names}")
+    if len(japanese_chars) > 2:
+        return 'japan'
+    
+    # 通过艺术家名称识别
+    if any(keyword in artist_names.lower() for keyword in ['(us)', '(usa)', '(america)']):
+        return 'usa'
+    elif any(keyword in artist_names.lower() for keyword in ['(uk)', '(british)', '(britain)']):
+        return 'uk'
+    
+    return None
+
+def detect_language_from_track(track_info):
+    """从歌曲信息智能识别语言"""
+    artist_names = ', '.join([artist['name'] for artist in track_info.get('artists', [])])
+    title = track_info.get('name', '')
+    
+    # 中文检测
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', f"{title} {artist_names}")
+    if len(chinese_chars) > 2:
+        return 'chinese'
+    
+    # 韩文检测
+    korean_chars = re.findall(r'[\uac00-\ud7af]', f"{title} {artist_names}")
+    if len(korean_chars) > 2:
+        return 'korean'
+    
+    # 日文检测
+    japanese_chars = re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', f"{title} {artist_names}")
+    if len(japanese_chars) > 2:
+        return 'japanese'
+    
+    # 默认英语
+    return 'english'
+
 router = APIRouter(prefix="/api/spotify", tags=["Spotify"])
 
 spotify_service = SpotifyService()
@@ -23,6 +74,7 @@ class SpotifyTrack(BaseModel):
     year: Optional[int] = None
     country: Optional[str] = None
     language: Optional[str] = None
+    database_id: Optional[int] = None  # 数据库中的song.id
 
 class SpotifySearchResponse(BaseModel):
     tracks: List[SpotifyTrack]
@@ -117,41 +169,55 @@ async def search_spotify(
                 title = track_info['name']
                 album = track_info['album']['name'] if 'album' in track_info else None
                 
-                # 始终检测国家和语言信息
-                from app.services.language_detector import language_detector
-                detected_country, detected_language = language_detector.detect_country_and_language(
-                    title, artist_names, album
-                )
+                # 使用智能识别函数检测国家和语言信息
+                detected_country = detect_country_from_track(track_info)
+                detected_language = detect_language_from_track(track_info)
                 
-                # 应用国家和语言筛选
-                if country_filter or language_filter:
-                    # 国家筛选
-                    if country_filter:
-                        country_match = False
-                        filter_countries = [c.strip().lower() for c in country_filter.split(',')]
-                        for filter_country in filter_countries:
-                            if (detected_country and filter_country in detected_country.lower()) or \
-                               (filter_country in ['china', 'chinese', '中国'] and detected_country in ['中国', '台湾', '香港']) or \
-                               (filter_country in ['korea', 'korean', '韩国'] and detected_country == '韩国') or \
-                               (filter_country in ['japan', 'japanese', '日本'] and detected_country == '日本'):
-                                country_match = True
-                                break
-                        if not country_match:
-                            continue
-                    
-                    # 语言筛选  
-                    if language_filter:
-                        language_match = False
-                        filter_languages = [l.strip().lower() for l in language_filter.split(',')]
-                        for filter_language in filter_languages:
-                            if (detected_language and filter_language in detected_language.lower()) or \
-                               (filter_language in ['chinese', '中文'] and detected_language in ['中文', '国语', '粤语']) or \
-                               (filter_language in ['korean', '韩语'] and detected_language == '韩语') or \
-                               (filter_language in ['japanese', '日语'] and detected_language == '日语'):
-                                language_match = True
-                                break
-                        if not language_match:
-                            continue
+                # 应用国家和语言筛选（宽松模式：没有检测到的不过滤）
+                if country_filter and detected_country:
+                    country_match = False
+                    filter_countries = [c.strip().lower() for c in country_filter.split(',')]
+                    for filter_country in filter_countries:
+                        if filter_country == detected_country.lower():
+                            country_match = True
+                            break
+                        elif filter_country in ['china', 'chinese'] and detected_country == 'china':
+                            country_match = True
+                            break
+                        elif filter_country in ['korea', 'korean'] and detected_country == 'korea':
+                            country_match = True
+                            break
+                        elif filter_country in ['japan', 'japanese'] and detected_country == 'japan':
+                            country_match = True
+                            break
+                        elif filter_country in ['usa', 'america', 'english'] and detected_country in ['usa', 'uk']:
+                            country_match = True
+                            break
+                    if not country_match:
+                        continue
+                
+                # 语言筛选（宽松模式：没有检测到的不过滤）  
+                if language_filter and detected_language:
+                    language_match = False
+                    filter_languages = [l.strip().lower() for l in language_filter.split(',')]
+                    for filter_language in filter_languages:
+                        if filter_language == detected_language.lower():
+                            language_match = True
+                            break
+                        elif filter_language in ['chinese', '中文'] and detected_language == 'chinese':
+                            language_match = True
+                            break
+                        elif filter_language in ['korean', '韩语'] and detected_language == 'korean':
+                            language_match = True
+                            break
+                        elif filter_language in ['japanese', '日语'] and detected_language == 'japanese':
+                            language_match = True
+                            break
+                        elif filter_language in ['english', '英语'] and detected_language == 'english':
+                            language_match = True
+                            break
+                    if not language_match:
+                        continue
                 
                 # 预览筛选
                 if preview_only and not track_info.get('preview_url'):
@@ -228,7 +294,7 @@ async def parse_spotify_url(request: SpotifyParseRequest):
                 raise HTTPException(status_code=400, detail="无效的 Spotify playlist URL")
             
             playlist_id = playlist_id_match.group(1)
-            playlist_info = spotify_service.get_playlist_info(playlist_id)
+            playlist_info = spotify_service.get_playlist_tracks_complete(playlist_id)
             
             if not playlist_info:
                 raise HTTPException(status_code=404, detail="未找到播放列表信息")
@@ -254,7 +320,7 @@ async def parse_spotify_url(request: SpotifyParseRequest):
                 "name": playlist_info['name'],
                 "description": playlist_info.get('description', ''),
                 "total_tracks": len(tracks),
-                "tracks": tracks[:50]  # 限制返回前50首歌
+                "tracks": tracks  # 返回所有歌曲
             }
             
         elif 'album/' in url:
@@ -298,6 +364,54 @@ async def parse_spotify_url(request: SpotifyParseRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"解析 URL 失败: {str(e)}")
+
+@router.get("/search-with-preview", response_model=SpotifySearchResponse)
+async def search_with_preview(
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(10, ge=1, le=50, description="返回数量")
+):
+    """搜索歌曲（优化版，尝试获取preview_url）"""
+    try:
+        tracks_data = spotify_service.search_track_with_preview(q, limit)
+        
+        tracks = []
+        for track_info in tracks_data:
+            # 获取艺术家名称
+            artist_names = ', '.join([artist['name'] for artist in track_info['artists']])
+            title = track_info['name']
+            album = track_info['album']['name'] if 'album' in track_info else None
+            
+            # 检测语言和国家
+            from app.services.language_detector import language_detector
+            detected_country, detected_language = language_detector.detect_country_and_language(
+                title, artist_names, album
+            )
+            
+            track = SpotifyTrack(
+                id=track_info['id'],
+                title=title,
+                artist=artist_names,
+                album=album,
+                album_art=track_info['album']['images'][0]['url'] if track_info.get('album', {}).get('images') else None,
+                duration=track_info.get('duration_ms', 0) // 1000,
+                preview_url=track_info.get('preview_url'),
+                spotify_url=track_info['external_urls']['spotify'],
+                year=None,
+                country=detected_country,
+                language=detected_language
+            )
+            tracks.append(track)
+        
+        # 统计有preview的歌曲数量
+        tracks_with_preview = [t for t in tracks if t.preview_url]
+        print(f"搜索 '{q}': 总共 {len(tracks)} 首, 有preview {len(tracks_with_preview)} 首")
+        
+        return SpotifySearchResponse(
+            tracks=tracks,
+            total=len(tracks)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
 
 @router.get("/track/{track_id}")
 async def get_track_details(track_id: str):
@@ -416,3 +530,184 @@ async def get_country_top_tracks(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取国家热门音乐失败: {str(e)}")
+
+# 新增数据模型
+class SpotifyPlaylist(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    owner: Optional[str] = None
+    total_tracks: int
+    image_url: Optional[str] = None
+    spotify_url: str
+    is_public: bool
+
+class SpotifyAlbum(BaseModel):
+    id: str
+    name: str
+    artist: str
+    total_tracks: int
+    release_date: Optional[str] = None
+    image_url: Optional[str] = None
+    spotify_url: str
+
+class SpotifyArtist(BaseModel):
+    id: str
+    name: str
+    genres: List[str]
+    followers: int
+    image_url: Optional[str] = None
+    spotify_url: str
+    popularity: int
+
+class MultiSearchResponse(BaseModel):
+    tracks: Optional[List[SpotifyTrack]] = None
+    playlists: Optional[List[SpotifyPlaylist]] = None
+    albums: Optional[List[SpotifyAlbum]] = None
+    artists: Optional[List[SpotifyArtist]] = None
+    total: int
+
+@router.get("/search-multi", response_model=MultiSearchResponse)
+async def search_multi_type(
+    q: str = Query(..., description="搜索查询"),
+    types: str = Query("track,playlist,album,artist", description="搜索类型，逗号分隔: track,playlist,album,artist"),
+    limit: int = Query(10, ge=1, le=50, description="每种类型的返回数量"),
+    market: str = Query("US", description="市场代码")
+):
+    """多类型搜索 - 模仿Spotify Web界面的搜索功能"""
+    try:
+        search_types = [t.strip() for t in types.split(",")]
+        results = spotify_service.search_multi_type(q, search_types, limit, market)
+        
+        # 格式化响应
+        response_data = {"total": 0}
+        
+        # 处理歌曲结果
+        if "tracks" in results:
+            tracks = []
+            for track in results["tracks"]:
+                tracks.append(SpotifyTrack(
+                    id=track["id"],
+                    title=track["name"],
+                    artist=', '.join([artist['name'] for artist in track['artists']]),
+                    album=track['album']['name'] if 'album' in track else None,
+                    album_art=track['album']['images'][0]['url'] if track.get('album', {}).get('images') else None,
+                    duration=track.get('duration_ms', 0) // 1000,
+                    preview_url=track.get('preview_url'),
+                    spotify_url=track['external_urls']['spotify'],
+                    year=track.get('album', {}).get('release_date', '')[:4] if track.get('album', {}).get('release_date') else None,
+                    country=detect_country_from_track(track),
+                    language=detect_language_from_track(track)
+                ))
+            response_data["tracks"] = tracks
+            response_data["total"] += len(tracks)
+        
+        # 处理歌单结果
+        if "playlists" in results:
+            playlists = []
+            for playlist in results["playlists"]:
+                playlists.append(SpotifyPlaylist(
+                    id=playlist["id"],
+                    name=playlist["name"],
+                    description=playlist.get("description"),
+                    owner=playlist["owner"]["display_name"] if playlist.get("owner") else None,
+                    total_tracks=playlist["tracks"]["total"],
+                    image_url=playlist["images"][0]["url"] if playlist.get("images") else None,
+                    spotify_url=playlist["external_urls"]["spotify"],
+                    is_public=playlist.get("public", True)
+                ))
+            response_data["playlists"] = playlists
+            response_data["total"] += len(playlists)
+        
+        # 处理专辑结果
+        if "albums" in results:
+            albums = []
+            for album in results["albums"]:
+                albums.append(SpotifyAlbum(
+                    id=album["id"],
+                    name=album["name"],
+                    artist=', '.join([artist['name'] for artist in album['artists']]),
+                    total_tracks=album["total_tracks"],
+                    release_date=album.get("release_date"),
+                    image_url=album["images"][0]["url"] if album.get("images") else None,
+                    spotify_url=album["external_urls"]["spotify"]
+                ))
+            response_data["albums"] = albums
+            response_data["total"] += len(albums)
+        
+        # 处理艺人结果
+        if "artists" in results:
+            artists = []
+            for artist in results["artists"]:
+                artists.append(SpotifyArtist(
+                    id=artist["id"],
+                    name=artist["name"],
+                    genres=artist.get("genres", []),
+                    followers=artist["followers"]["total"],
+                    image_url=artist["images"][0]["url"] if artist.get("images") else None,
+                    spotify_url=artist["external_urls"]["spotify"],
+                    popularity=artist.get("popularity", 0)
+                ))
+            response_data["artists"] = artists
+            response_data["total"] += len(artists)
+        
+        return MultiSearchResponse(**response_data)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"多类型搜索失败: {str(e)}")
+
+@router.get("/search-playlists", response_model=List[SpotifyPlaylist])
+async def search_playlists_advanced(
+    q: str = Query(..., description="搜索查询"),
+    limit: int = Query(20, ge=1, le=50, description="返回数量"),
+    market: str = Query("US", description="市场代码")
+):
+    """高级歌单搜索 - 专门优化歌单搜索结果质量"""
+    try:
+        playlists = spotify_service.search_playlists_advanced(q, limit, market)
+        
+        result = []
+        for playlist in playlists:
+            result.append(SpotifyPlaylist(
+                id=playlist["id"],
+                name=playlist["name"],
+                description=playlist.get("description"),
+                owner=playlist["owner"]["display_name"] if playlist.get("owner") else None,
+                total_tracks=playlist["tracks"]["total"],
+                image_url=playlist["images"][0]["url"] if playlist.get("images") else None,
+                spotify_url=playlist["external_urls"]["spotify"],
+                is_public=playlist.get("public", True)
+            ))
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"歌单搜索失败: {str(e)}")
+
+@router.get("/playlists-by-category", response_model=List[SpotifyPlaylist])
+async def get_playlists_by_category(
+    category: str = Query(..., description="分类: korean, japanese, chinese, pop, rock, electronic, etc."),
+    limit: int = Query(20, ge=1, le=50, description="返回数量"),
+    market: str = Query("US", description="市场代码")
+):
+    """按分类获取精选歌单"""
+    try:
+        playlists = spotify_service.get_featured_playlists_by_category(category, limit, market)
+        
+        result = []
+        for playlist in playlists:
+            result.append(SpotifyPlaylist(
+                id=playlist["id"],
+                name=playlist["name"],
+                description=playlist.get("description"),
+                owner=playlist["owner"]["display_name"] if playlist.get("owner") else None,
+                total_tracks=playlist["tracks"]["total"],
+                image_url=playlist["images"][0]["url"] if playlist.get("images") else None,
+                spotify_url=playlist["external_urls"]["spotify"],
+                is_public=playlist.get("public", True)
+            ))
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取分类歌单失败: {str(e)}")
