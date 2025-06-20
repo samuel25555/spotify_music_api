@@ -28,6 +28,17 @@
             opacity: 0;
         }
         
+        /* 平滑的数据更新 */
+        .download-task-item {
+            transition: all 0.3s ease;
+        }
+        
+        /* 防止闪烁的通用样式 */
+        .no-flash {
+            backface-visibility: hidden;
+            transform: translateZ(0);
+        }
+        
         .loader {
             border: 3px solid #f3f3f3;
             border-top: 3px solid #3498db;
@@ -233,10 +244,10 @@
                 this.isLoading = e.detail;
             });
             
-            // 定期刷新下载任务
+            // 定期刷新下载任务（智能更新，不闪烁）
             setInterval(() => {
                 if (this.activeTab === 'downloads' || this.pendingDownloads > 0) {
-                    this.loadDownloadTasks();
+                    this.updateDownloadTasksSilent();
                 }
             }, 3000);
         },
@@ -264,6 +275,37 @@
                     ).length;
                 } catch (error) {
                     this.showError('加载下载任务失败: ' + error.message);
+                }
+            },
+            
+            // 静默更新下载任务（不闪烁）
+            async updateDownloadTasksSilent() {
+                try {
+                    const response = await api.getDownloadTasks();
+                    const newTasks = response.tasks || [];
+                    
+                    // 智能更新：只更新变化的任务
+                    newTasks.forEach(newTask => {
+                        const existingIndex = this.downloadTasks.findIndex(t => t.id === newTask.id);
+                        if (existingIndex !== -1) {
+                            // 使用Vue.set确保响应式更新
+                            Vue.set(this.downloadTasks, existingIndex, newTask);
+                        } else {
+                            // 新任务添加到开头
+                            this.downloadTasks.unshift(newTask);
+                        }
+                    });
+                    
+                    // 移除已经不存在的任务
+                    const newTaskIds = new Set(newTasks.map(t => t.id));
+                    this.downloadTasks = this.downloadTasks.filter(t => newTaskIds.has(t.id));
+                    
+                    // 更新待处理任务数
+                    this.pendingDownloads = this.downloadTasks.filter(
+                        task => ['pending', 'downloading'].includes(task.status)
+                    ).length;
+                } catch (error) {
+                    console.error('更新下载任务失败:', error);
                 }
             },
             
